@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { DragDropZone } from "@/components/upload/DragDropZone";
 import { UploadSuccess } from "@/components/upload/UploadSuccess";
@@ -9,7 +9,7 @@ import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { FileSearch, Trash2 } from "lucide-react";
 
 import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory } from "@/lib/db";
-import { useEffect } from "react";
+import { VerificationStateMap } from "@/lib/types";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -18,10 +18,32 @@ export default function Home() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const [extractedData, setExtractedData] = useState<any>(null);
+  const [verificationState, setVerificationState] = useState<VerificationStateMap>({});
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
+
+  // Auto-save debouncer ref for IndexedDB persistence
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleDataChange = useCallback((newData: any, newVerificationState: VerificationStateMap) => {
+    setExtractedData(newData);
+    setVerificationState(newVerificationState);
+
+    if (currentHistoryId) {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      saveTimeoutRef.current = setTimeout(() => {
+        updateHistory(currentHistoryId, {
+          extractedData: newData,
+          verificationState: newVerificationState,
+          timestamp: Date.now()
+        }).catch(console.error);
+      }, 500);
+    }
+  }, [currentHistoryId]);
 
   useEffect(() => {
     getHistory().then(setHistory).catch(console.error);
@@ -61,6 +83,7 @@ export default function Home() {
       const data = await response.json();
       console.log("Extracted Data:", data);
       setExtractedData(data);
+      setVerificationState({});
 
       // Create a new session
       const sessionId = `session_${Date.now()}`;
@@ -75,6 +98,7 @@ export default function Home() {
         prompt,
         format,
         extractedData: data,
+        verificationState: {},
         timestamp: Date.now()
       };
 
@@ -121,6 +145,7 @@ export default function Home() {
 
       const data = await response.json();
       setExtractedData(data);
+      setVerificationState({});
       setPrompt(combinedPrompt);
 
       // Update existing history record instead of creating a new one
@@ -128,6 +153,7 @@ export default function Home() {
         const updates: Partial<HistoryRecord> = {
           prompt: combinedPrompt,
           extractedData: data,
+          verificationState: {},
           timestamp: Date.now()
         };
         updateHistory(currentHistoryId, updates).then(() => {
@@ -149,6 +175,7 @@ export default function Home() {
           prompt: combinedPrompt,
           format,
           extractedData: data,
+          verificationState: {},
           timestamp: Date.now()
         };
 
@@ -168,6 +195,7 @@ export default function Home() {
   const handleReset = () => {
     setFile(null);
     setExtractedData(null);
+    setVerificationState({});
     setError(null);
     setCurrentSessionId(null);
     setCurrentHistoryId(null);
@@ -235,6 +263,7 @@ export default function Home() {
                             setPrompt(record.prompt);
                             setFormat(record.format);
                             setExtractedData(record.extractedData);
+                            setVerificationState(record.verificationState || {});
                             setCurrentSessionId(record.sessionId);
                             setCurrentHistoryId(record.id);
                           }}
@@ -310,6 +339,8 @@ export default function Home() {
                   data={extractedData}
                   isRefining={isRefining}
                   onRefine={handleRefine}
+                  onDataChange={handleDataChange}
+                  verificationState={verificationState}
                 />
               </motion.div>
             )}

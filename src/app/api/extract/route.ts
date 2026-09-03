@@ -1,6 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
+// Max duration for Vercel Serverless execution (up to 60s for Pro/Enterprise)
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
+const ALLOWED_MIME_TYPES = new Set([
+    "application/pdf",
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/webp"
+]);
+
+// Configurable max payload limit in megabytes (defaults to Vercel's 4.5MB ceiling)
+const MAX_PAYLOAD_BYTES = (Number(process.env.MAX_FILE_SIZE_MB) || 4.5) * 1024 * 1024;
+
 let _ai: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
     if (!_ai) {
@@ -76,12 +91,81 @@ const ARCHITECT_PROMPT = `Ты — Senior Data Architect и эксперт по 
 }
 
 ПРАВИЛА:
-1. АДАПТИВНОСТЬ: Внимательно изучи запрос. Если пользователь хочет извлекать списки — используй массивы объектов. Если это общая аналитика — используй одиночные объекты.
-2. КАЖДОЕ конечное поле оборачивается в {value, box_2d, page}. Без исключений.
-3. ДОКУМЕНТИРОВАНИЕ: Каждое поле должно содержать подробный description.
-4. Поле markdown_text (если нужен текстовый отчёт) — это ЕДИНСТВЕННОЕ исключение. Оно остаётся простой строкой без box_2d, потому что отчёт генерируется ИИ, а не извлекается из конкретного места.
+1. СТРОГИЙ СТАНДАРТ: Твоя схема должна быть чистым подмножеством OpenAPI 3.0 / JSON Schema, совместимым с Google Gemini API. Используй стандартные поля: "type", "properties", "items", "required", "description". НЕ используй $schema, $id, additionalProperties, title, pattern, anyOf, oneOf.
+2. АДАПТИВНОСТЬ: Внимательно изучи запрос. Если пользователь хочет извлекать списки — используй массивы объектов. Если это общая аналитика — используй одиночные объекты.
+3. КАЖДОЕ конечное (leaf) поле оборачивается в {value, box_2d, page}. Без исключений.
+4. ДОКУМЕНТИРОВАНИЕ: Каждое поле должно содержать подробный description.
+5. Поле markdown_text (если нужен текстовый отчёт) — это ЕДИНСТВЕННОЕ исключение. Оно остаётся простой строкой без box_2d, потому что отчёт генерируется ИИ, а не извлекается из конкретного места.
 
 Выдавай ТОЛЬКО валидный JSON Schema, без каких-либо вводных слов, маркдаун-тегов или объяснений. Твой ответ пойдет напрямую в парсер.`;
+
+/**
+ * Sanitizes an arbitrary JSON schema into a strict OpenAPI 3.0 schema
+ * compatible with Gemini's responseSchema parameter.
+ * Removes forbidden keywords ($schema, additionalProperties, pattern, etc.)
+ * and ensures required properties exist.
+ */
+function sanitizeForGeminiSchema(schema: any): any {
+    if (!schema || typeof schema !== 'object') return schema;
+
+    if (Array.isArray(schema)) {
+        return schema.map(sanitizeForGeminiSchema);
+    }
+
+    const clean: Record<string, any> = {};
+
+    // 1. Determine & normalize type
+    let type = schema.type;
+    if (schema.properties && !type) {
+        type = 'object';
+    } else if (schema.items && !type) {
+        type = 'array';
+    }
+
+    if (typeof type === 'string') {
+        clean.type = type.toLowerCase();
+    }
+
+    // 2. Allowed metadata
+    if (schema.description && typeof schema.description === 'string') {
+        clean.description = schema.description;
+    }
+    if (schema.nullable === true) {
+        clean.nullable = true;
+    }
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+        clean.enum = schema.enum.map(String);
+    }
+
+    // 3. Properties for objects
+    if (schema.properties && typeof schema.properties === 'object') {
+        clean.properties = {};
+        const validPropKeys = new Set<string>();
+        for (const [propKey, propVal] of Object.entries(schema.properties)) {
+            if (propVal && typeof propVal === 'object') {
+                clean.properties[propKey] = sanitizeForGeminiSchema(propVal);
+                validPropKeys.add(propKey);
+            }
+        }
+
+        // 4. Required fields (must only reference existing properties)
+        if (Array.isArray(schema.required) && schema.required.length > 0) {
+            const validRequired = schema.required.filter(
+                (r: any) => typeof r === 'string' && validPropKeys.has(r)
+            );
+            if (validRequired.length > 0) {
+                clean.required = validRequired;
+            }
+        }
+    }
+
+    // 5. Items for arrays
+    if (schema.items && typeof schema.items === 'object') {
+        clean.items = sanitizeForGeminiSchema(schema.items);
+    }
+
+    return clean;
+}
 
 const EXTRACTOR_PROMPT = `Ты — элитный Forensic Data Auditor с возможностями пространственного зрения (spatial vision). Ты работаешь над проектом стоимостью в миллионы долларов, где от твоей точности зависят критические бизнес-решения.
 
@@ -115,12 +199,33 @@ export async function POST(req: NextRequest) {
         const format = formData.get("format") as string | null || "auto";
 
         if (!file) {
-            return NextResponse.json({ error: "No file provided" }, { status: 400 });
+            return NextResponse.json({ error: "No document file provided." }, { status: 400 });
+        }
+
+        // Validate MIME type
+        const mimeType = file.type || "application/octet-stream";
+        const isAllowedMime = ALLOWED_MIME_TYPES.has(mimeType) ||
+            (mimeType === "application/octet-stream" && file.name.toLowerCase().endsWith(".pdf"));
+
+        if (!isAllowedMime) {
+            return NextResponse.json(
+                { error: `Unsupported document format (${mimeType}). Please upload a PDF or image (PNG, JPEG, WebP).` },
+                { status: 415 }
+            );
+        }
+
+        // Validate File Size against Serverless ceiling
+        if (file.size > MAX_PAYLOAD_BYTES) {
+            const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+            const limitMB = (MAX_PAYLOAD_BYTES / (1024 * 1024)).toFixed(1);
+            return NextResponse.json(
+                { error: `Document size (${sizeMB}MB) exceeds the maximum allowed payload limit of ${limitMB}MB. Please compress the file before uploading.` },
+                { status: 413 }
+            );
         }
 
         const buffer = await file.arrayBuffer();
         const base64Data = Buffer.from(buffer).toString("base64");
-        const mimeType = file.type;
         const ai = getAI();
 
         let formatInstructions = "";
@@ -136,7 +241,7 @@ export async function POST(req: NextRequest) {
 
         console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format);
 
-        // Step 1: Generate JSON Schema
+        // Step 1: Generate JSON Schema with strict JSON mode
         const schemaResponse = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [
@@ -147,7 +252,9 @@ export async function POST(req: NextRequest) {
                     ]
                 }
             ],
-            config: {}
+            config: {
+                responseMimeType: "application/json",
+            }
         });
 
         let schemaText = schemaResponse.text || "{}";
@@ -163,32 +270,66 @@ export async function POST(req: NextRequest) {
 
         console.log("Generated Schema:", JSON.stringify(generatedSchema, null, 2));
 
-        // Step 2: Extract Data with spatial coordinates
+        // Step 2: Extract Data with spatial coordinates and enforced schema
         console.log("Step 2: Extractor extracting data with bounding boxes...");
         const extractTask = EXTRACTOR_PROMPT + "\n\nСХЕМА:\n" + JSON.stringify(generatedSchema, null, 2);
 
-        const extractionResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-                {
-                    role: "user",
-                    parts: [
-                        { text: extractTask },
-                        {
-                            inlineData: {
-                                data: base64Data,
-                                mimeType: mimeType,
-                            }
-                        }
-                    ]
-                }
-            ],
-            config: {
-                responseMimeType: "application/json",
-            }
-        });
+        // Sanitize generated schema into strict OpenAPI 3.0 subset for Gemini responseSchema
+        const sanitizedSchema = sanitizeForGeminiSchema(generatedSchema);
 
-        const extractionText = extractionResponse.text || "{}";
+        let extractionText = "{}";
+        try {
+            const extractionResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: extractTask },
+                            {
+                                inlineData: {
+                                    data: base64Data,
+                                    mimeType: mimeType,
+                                }
+                            }
+                        ]
+                    }
+                ],
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: sanitizedSchema,
+                }
+            });
+            extractionText = extractionResponse.text || "{}";
+        } catch (schemaErr: any) {
+            console.warn(
+                "Enforced responseSchema call failed, falling back to prompt-guided JSON mode:",
+                schemaErr?.message || schemaErr
+            );
+            // Resilient fallback without responseSchema
+            const fallbackResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: extractTask },
+                            {
+                                inlineData: {
+                                    data: base64Data,
+                                    mimeType: mimeType,
+                                }
+                            }
+                        ]
+                    }
+                ],
+                config: {
+                    responseMimeType: "application/json",
+                }
+            });
+            extractionText = fallbackResponse.text || "{}";
+        }
+
         let extractionResult;
         try {
             extractionResult = JSON.parse(extractionText);

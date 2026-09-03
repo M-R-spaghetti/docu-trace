@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { ActiveHighlight } from "@/lib/types";
+import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
 import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2 } from "lucide-react";
@@ -19,9 +19,11 @@ interface WorkspaceLayoutProps {
     data: any;
     isRefining?: boolean;
     onRefine?: (newPrompt: string) => Promise<void>;
+    onDataChange?: (updatedExtracted: any, updatedVerificationState: VerificationStateMap) => void;
+    verificationState?: VerificationStateMap;
 }
 
-export function WorkspaceLayout({ file, data, isRefining, onRefine }: WorkspaceLayoutProps) {
+export function WorkspaceLayout({ file, data, isRefining, onRefine, onDataChange, verificationState }: WorkspaceLayoutProps) {
     const [activeHighlight, setActiveHighlight] = useState<ActiveHighlight | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isFloating, setIsFloating] = useState(false);
@@ -134,7 +136,13 @@ export function WorkspaceLayout({ file, data, isRefining, onRefine }: WorkspaceL
 
                     {/* DataTable component takes the full space */}
                     <div className="w-full flex-1 overflow-hidden">
-                        <DataTable extracted={data} setActiveHighlight={setActiveHighlight} />
+                        <DataTable
+                            extracted={data}
+                            setActiveHighlight={setActiveHighlight}
+                            onDataChange={onDataChange}
+                            initialVerificationState={verificationState}
+                            filename={file.name}
+                        />
                     </div>
 
                     {/* Secondary Refinement Chat */}

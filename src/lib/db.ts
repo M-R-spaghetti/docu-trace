@@ -1,3 +1,5 @@
+import { VerificationStateMap } from "@/lib/types";
+
 export interface HistoryRecord {
     id: string;
     sessionId: string;
@@ -5,6 +7,7 @@ export interface HistoryRecord {
     prompt: string;
     format: string;
     extractedData: any;
+    verificationState?: VerificationStateMap;
     timestamp: number;
 }
 

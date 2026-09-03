@@ -4,8 +4,9 @@ import * as React from "react";
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
-import { UploadCloud, File, AlertCircle } from "lucide-react";
+import { UploadCloud, File, AlertCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { validateDocumentFile, optimizeImageFile } from "@/lib/media";
 
 interface DragDropZoneProps {
     onFileAccepted: (file: File) => void;
@@ -13,16 +14,37 @@ interface DragDropZoneProps {
 
 export function DragDropZone({ onFileAccepted }: DragDropZoneProps) {
     const [error, setError] = useState<string | null>(null);
+    const [isOptimizing, setIsOptimizing] = useState(false);
 
-    const onDrop = useCallback((acceptedFiles: File[], rejectedFiles: any[]) => {
+    const onDrop = useCallback(async (acceptedFiles: File[], rejectedFiles: any[]) => {
         if (rejectedFiles && rejectedFiles.length > 0) {
-            setError("Please upload a valid PDF or Image file under 10MB.");
+            const firstErr = rejectedFiles[0]?.errors?.[0]?.message || "Please upload a valid PDF or Image file under 10MB.";
+            setError(firstErr);
             return;
         }
 
         if (acceptedFiles && acceptedFiles.length > 0) {
+            const rawFile = acceptedFiles[0];
+            const validation = validateDocumentFile(rawFile);
+            if (!validation.valid) {
+                setError(validation.error || "Invalid file.");
+                return;
+            }
+
             setError(null);
-            onFileAccepted(acceptedFiles[0]);
+            if (rawFile.type.startsWith("image/")) {
+                setIsOptimizing(true);
+                try {
+                    const optimized = await optimizeImageFile(rawFile);
+                    onFileAccepted(optimized);
+                } catch {
+                    onFileAccepted(rawFile);
+                } finally {
+                    setIsOptimizing(false);
+                }
+            } else {
+                onFileAccepted(rawFile);
+            }
         }
     }, [onFileAccepted]);
 
@@ -33,7 +55,7 @@ export function DragDropZone({ onFileAccepted }: DragDropZoneProps) {
             'image/*': ['.png', '.jpg', '.jpeg', '.webp']
         },
         maxFiles: 1,
-        maxSize: 10 * 1024 * 1024, // 10MB limit
+        maxSize: 15 * 1024 * 1024, // 15MB drop limit before client optimization
     });
 
     return (
@@ -55,30 +77,52 @@ export function DragDropZone({ onFileAccepted }: DragDropZoneProps) {
                 <input {...getInputProps()} />
 
                 <AnimatePresence mode="wait">
-                    <motion.div
-                        key={isDragActive ? "active" : "inactive"}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        transition={{ duration: 0.2 }}
-                        className="flex flex-col items-center justify-center space-y-4 text-center p-8"
-                    >
-                        <div className={cn(
-                            "p-4 rounded-full transition-colors",
-                            isDragActive ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
-                        )}>
-                            <UploadCloud className="w-10 h-10" />
-                        </div>
+                    {isOptimizing ? (
+                        <motion.div
+                            key="optimizing"
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="flex flex-col items-center justify-center space-y-4 text-center p-8"
+                        >
+                            <div className="p-4 rounded-full bg-primary/10 text-primary animate-pulse">
+                                <Loader2 className="w-10 h-10 animate-spin" />
+                            </div>
+                            <div className="space-y-1">
+                                <h3 className="text-xl font-semibold tracking-tight">
+                                    Optimizing Document Scan...
+                                </h3>
+                                <p className="text-sm text-muted-foreground max-w-sm">
+                                    Scaling image resolution for fast, high-accuracy AI spatial extraction.
+                                </p>
+                            </div>
+                        </motion.div>
+                    ) : (
+                        <motion.div
+                            key={isDragActive ? "active" : "inactive"}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -10 }}
+                            transition={{ duration: 0.2 }}
+                            className="flex flex-col items-center justify-center space-y-4 text-center p-8"
+                        >
+                            <div className={cn(
+                                "p-4 rounded-full transition-colors",
+                                isDragActive ? "bg-primary/20 text-primary" : "bg-muted text-muted-foreground"
+                            )}>
+                                <UploadCloud className="w-10 h-10" />
+                            </div>
 
-                        <div className="space-y-1">
-                            <h3 className="text-xl font-semibold tracking-tight">
-                                {isDragActive ? "Drop document here" : "Upload your document"}
-                            </h3>
-                            <p className="text-sm text-muted-foreground max-w-sm">
-                                Drag and drop your invoices or receipts here, or click to browse. Supports PDF, PNG, JPG, WEBP up to 10MB.
-                            </p>
-                        </div>
-                    </motion.div>
+                            <div className="space-y-1">
+                                <h3 className="text-xl font-semibold tracking-tight">
+                                    {isDragActive ? "Drop document here" : "Upload your document"}
+                                </h3>
+                                <p className="text-sm text-muted-foreground max-w-sm">
+                                    Drag and drop your invoices or receipts here, or click to browse. Supports PDF (up to 4.5MB) and high-res images.
+                                </p>
+                            </div>
+                        </motion.div>
+                    )}
                 </AnimatePresence>
 
                 {/* Animated background pulse when active */}

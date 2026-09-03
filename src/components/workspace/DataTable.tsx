@@ -3,15 +3,18 @@
 import { Badge } from "@/components/ui/badge";
 import { Check, CheckCircle2, Pencil, X, Play, Keyboard, MapPin } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { exportToCSV } from "@/lib/export";
+import { exportToCSV, exportToExcel, exportToJSON } from "@/lib/export";
 import { toast } from "sonner";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ActiveHighlight, BoundingBox } from "@/lib/types";
+import { ActiveHighlight, BoundingBox, VerificationStatus, VerificationStateMap } from "@/lib/types";
 
 interface DataTableProps {
     extracted: any;
     setActiveHighlight: (highlight: ActiveHighlight | null) => void;
+    onDataChange?: (updatedExtracted: any, updatedVerificationState: VerificationStateMap) => void;
+    initialVerificationState?: VerificationStateMap;
+    filename?: string;
 }
 
 function formatLabel(key: string) {
@@ -20,8 +23,6 @@ function formatLabel(key: string) {
         .replace(/([A-Z])/g, ' $1')
         .replace(/^./, str => str.toUpperCase());
 }
-
-type VerificationStatus = 'pending' | 'verified' | 'edited';
 
 // Helper: check if a value is a LocatedValue (has value + box_2d)
 function isLocatedValue(v: any): v is { value: any; box_2d: BoundingBox; page: number } {
@@ -42,6 +43,7 @@ function getHighlight(v: any, label?: string): ActiveHighlight | null {
         box_2d: v.box_2d,
         page: v.page || 1,
         label,
+        rawValue: String(v.value ?? ''),
     };
 }
 
@@ -59,11 +61,62 @@ interface VerificationItem {
     columns?: { key: string; value: string; highlight: ActiveHighlight | null }[];
 }
 
-export function DataTable({ extracted, setActiveHighlight }: DataTableProps) {
+function mutateExtractedData(
+    currentExtracted: any,
+    target: { type: 'field'; key: string } | { type: 'cell'; arrayKey: string; rowIndex: number; colKey: string },
+    newVal: string
+): any {
+    if (!currentExtracted || !currentExtracted.data) return currentExtracted;
+
+    const currentData = { ...currentExtracted.data };
+
+    if (target.type === 'field') {
+        const raw = currentData[target.key];
+        if (isLocatedValue(raw)) {
+            currentData[target.key] = {
+                ...raw,
+                originalValue: raw.originalValue ?? raw.value,
+                value: newVal
+            };
+        } else {
+            currentData[target.key] = newVal;
+        }
+    } else if (target.type === 'cell') {
+        const arr = [...(currentData[target.arrayKey] || [])];
+        const row = { ...(arr[target.rowIndex] || {}) };
+        const rawCell = row[target.colKey];
+        if (isLocatedValue(rawCell)) {
+            row[target.colKey] = {
+                ...rawCell,
+                originalValue: rawCell.originalValue ?? rawCell.value,
+                value: newVal
+            };
+        } else {
+            row[target.colKey] = newVal;
+        }
+        arr[target.rowIndex] = row;
+        currentData[target.arrayKey] = arr;
+    }
+
+    return {
+        ...currentExtracted,
+        data: currentData
+    };
+}
+
+export function DataTable({
+    extracted,
+    setActiveHighlight,
+    onDataChange,
+    initialVerificationState,
+    filename
+}: DataTableProps) {
     const data = extracted?.data || {};
     const schema = extracted?.schema || {};
 
-    // Build flat verification items list from new format
+    const verificationItemsRef = useRef<VerificationItem[]>([]);
+
+    // Build flat verification items list from new format, preserving existing/saved statuses
     const buildVerificationItems = useCallback((): VerificationItem[] => {
         const items: VerificationItem[] = [];
         const allKeys = Object.keys(data).filter(k => k !== 'markdown_text');
@@ -79,13 +132,26 @@ export function DataTable({ extracted, setActiveHighlight }: DataTableProps) {
             const displayVal = getDisplayValue(raw);
             if (displayVal === '-') return;
 
+            const id = `field_${k}`;
+            const existingItem = verificationItemsRef.current.find(i => i.id === id);
+            const savedState = initialVerificationState?.[id];
+
+            const status: VerificationStatus = existingItem?.status
+                || savedState?.status
+                || (raw.originalValue !== undefined ? 'edited' : 'pending');
+
+            const editedVal = existingItem?.editedValue
+                || savedState?.editedValue
+                || (raw.originalValue !== undefined ? displayVal : undefined);
+
             items.push({
-                id: `field_${k}`,
+                id,
                 type: 'field',
                 label: formatLabel(k),
                 value: displayVal,
                 highlight: getHighlight(raw, formatLabel(k)),
-                status: 'pending',
+                status,
+                editedValue: editedVal,
             });
         });
 
@@ -97,47 +163,86 @@ export function DataTable({ extracted, setActiveHighlight }: DataTableProps) {
                 const colKeys = Object.keys(item);
                 const displayValue = colKeys.map(ck => getDisplayValue(item[ck])).join(' | ');
 
+                const id = `row_${arrayKey}_${idx}`;
+                const existingItem = verificationItemsRef.current.find(i => i.id === id);
+                const savedState = initialVerificationState?.[id];
+
                 // Get first available highlight for the row
                 const firstHighlight = colKeys
                     .map(ck => getHighlight(item[ck], `${formatLabel(arrayKey)} #${idx + 1} → ${formatLabel(ck)}`))
                     .find(Boolean) || null;
 
+                const columns = colKeys.map(ck => ({
+                    key: ck,
+                    value: getDisplayValue(item[ck]),
+                    highlight: getHighlight(item[ck], `${formatLabel(arrayKey)} #${idx + 1} → ${formatLabel(ck)}`),
+                }));
+
+                const hasAnyColumnEdited = colKeys.some(ck => item[ck]?.originalValue !== undefined);
+
+                const status: VerificationStatus = existingItem?.status
+                    || savedState?.status
+                    || (hasAnyColumnEdited ? 'edited' : 'pending');
+
                 items.push({
-                    id: `row_${arrayKey}_${idx}`,
+                    id,
                     type: 'row',
                     label: `${formatLabel(arrayKey)} #${idx + 1}`,
                     value: displayValue,
                     highlight: firstHighlight,
-                    status: 'pending',
+                    status,
+                    editedValue: existingItem?.editedValue || savedState?.editedValue,
                     rowIndex: idx,
                     arrayKey,
-                    columns: colKeys.map(ck => ({
-                        key: ck,
-                        value: getDisplayValue(item[ck]),
-                        highlight: getHighlight(item[ck], `${formatLabel(arrayKey)} #${idx + 1} → ${formatLabel(ck)}`),
-                    })),
+                    columns,
                 });
             });
         });
 
         return items;
-    }, [data]);
+    }, [data, initialVerificationState]);
 
-    const [verificationItems, setVerificationItems] = useState<VerificationItem[]>(() => buildVerificationItems());
+    const [verificationItems, setVerificationItems] = useState<VerificationItem[]>(() => {
+        const initial = buildVerificationItems();
+        verificationItemsRef.current = initial;
+        return initial;
+    });
+
     const [isReviewMode, setIsReviewMode] = useState(false);
     const [activeIndex, setActiveIndex] = useState(0);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editValue, setEditValue] = useState("");
     const [editColumnKey, setEditColumnKey] = useState<string | null>(null);
+    const [exportFormat, setExportFormat] = useState<'csv' | 'excel' | 'json'>('csv');
     const scrollRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
     const editInputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
-    // Rebuild when data changes
+    // Keep ref updated
     useEffect(() => {
-        setVerificationItems(buildVerificationItems());
+        verificationItemsRef.current = verificationItems;
+    }, [verificationItems]);
+
+    // Rebuild when data or initialVerificationState changes
+    useEffect(() => {
+        const updated = buildVerificationItems();
+        setVerificationItems(updated);
+        verificationItemsRef.current = updated;
     }, [buildVerificationItems]);
+
+    const syncChanges = useCallback((newExtracted: any, currentItems: VerificationItem[]) => {
+        if (!onDataChange) return;
+        const vMap: VerificationStateMap = {};
+        currentItems.forEach(item => {
+            vMap[item.id] = {
+                status: item.status,
+                editedValue: item.editedValue,
+                columns: item.columns ? Object.fromEntries(item.columns.map(c => [c.key, c.value])) : undefined
+            };
+        });
+        onDataChange(newExtracted, vMap);
+    }, [onDataChange]);
 
     // Stats
     const stats = useMemo(() => {
@@ -222,9 +327,14 @@ export function DataTable({ extracted, setActiveHighlight }: DataTableProps) {
 
     const approveItem = (id: string | undefined) => {
         if (!id) return;
-        setVerificationItems(prev => prev.map(item =>
-            item.id === id ? { ...item, status: 'verified' as VerificationStatus } : item
-        ));
+        setVerificationItems(prev => {
+            const updated = prev.map(item =>
+                item.id === id ? { ...item, status: 'verified' as VerificationStatus } : item
+            );
+            verificationItemsRef.current = updated;
+            syncChanges(extracted, updated);
+            return updated;
+        });
     };
 
     const startEditing = (item: VerificationItem | undefined) => {
@@ -242,17 +352,61 @@ export function DataTable({ extracted, setActiveHighlight }: DataTableProps) {
 
     const saveEdit = () => {
         if (!editingId) return;
-        setVerificationItems(prev => prev.map(item => {
-            if (item.id !== editingId) return item;
-            if (editColumnKey && item.columns) {
-                const updatedColumns = item.columns.map(col =>
-                    col.key === editColumnKey ? { ...col, value: editValue } : col
+
+        let updatedExtracted = extracted;
+
+        if (editColumnKey) {
+            const item = verificationItems.find(i => i.id === editingId);
+            if (item && item.arrayKey !== undefined && item.rowIndex !== undefined) {
+                updatedExtracted = mutateExtractedData(
+                    extracted,
+                    {
+                        type: 'cell',
+                        arrayKey: item.arrayKey,
+                        rowIndex: item.rowIndex,
+                        colKey: editColumnKey
+                    },
+                    editValue
                 );
-                const newDisplayValue = updatedColumns.map(c => c.value).join(' | ');
-                return { ...item, status: 'edited', columns: updatedColumns, value: newDisplayValue, editedValue: newDisplayValue };
             }
-            return { ...item, status: 'edited', editedValue: editValue, value: editValue };
-        }));
+        } else {
+            const key = editingId.replace(/^field_/, '');
+            updatedExtracted = mutateExtractedData(
+                extracted,
+                { type: 'field', key },
+                editValue
+            );
+        }
+
+        setVerificationItems(prev => {
+            const updated = prev.map(item => {
+                if (item.id !== editingId) return item;
+                if (editColumnKey && item.columns) {
+                    const updatedColumns = item.columns.map(col =>
+                        col.key === editColumnKey ? { ...col, value: editValue } : col
+                    );
+                    const newDisplayValue = updatedColumns.map(c => c.value).join(' | ');
+                    return {
+                        ...item,
+                        status: 'edited' as VerificationStatus,
+                        columns: updatedColumns,
+                        value: newDisplayValue,
+                        editedValue: newDisplayValue
+                    };
+                }
+                return {
+                    ...item,
+                    status: 'edited' as VerificationStatus,
+                    editedValue: editValue,
+                    value: editValue
+                };
+            });
+
+            verificationItemsRef.current = updated;
+            syncChanges(updatedExtracted, updated);
+            return updated;
+        });
+
         setEditingId(null);
         setEditColumnKey(null);
     };
@@ -626,19 +780,91 @@ export function DataTable({ extracted, setActiveHighlight }: DataTableProps) {
             </div>
 
             {/* Sticky bottom actions */}
-            <div className="p-4 border-t bg-muted/10 flex-none">
+            <div className="p-4 border-t bg-muted/10 flex-none space-y-3">
+                {/* Export Format Selector */}
+                <div className="flex items-center justify-between gap-2 px-0.5">
+                    <span className="text-xs text-muted-foreground font-medium">Export format:</span>
+                    <div className="flex bg-muted/60 p-0.5 rounded-lg text-xs">
+                        <button
+                            type="button"
+                            className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${
+                                exportFormat === 'csv'
+                                    ? 'bg-background text-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => setExportFormat('csv')}
+                            title="CSV for Excel / 1C with UTF-8 BOM & semicolon delimiter"
+                        >
+                            <span className="text-[11px]">📊</span> CSV (Excel)
+                        </button>
+                        <button
+                            type="button"
+                            className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${
+                                exportFormat === 'excel'
+                                    ? 'bg-background text-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => setExportFormat('excel')}
+                            title="Excel Spreadsheet (.xls) with styled headers"
+                        >
+                            <span className="text-[11px]">📗</span> Excel (.xls)
+                        </button>
+                        <button
+                            type="button"
+                            className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${
+                                exportFormat === 'json'
+                                    ? 'bg-background text-foreground shadow-sm'
+                                    : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                            onClick={() => setExportFormat('json')}
+                            title="Clean JSON without internal coordinates"
+                        >
+                            <span className="text-[11px]">📄</span> JSON
+                        </button>
+                    </div>
+                </div>
+
                 <Button
                     className="w-full gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-lg shadow-emerald-500/20 border-0"
                     size="lg"
                     onClick={() => {
-                        exportToCSV(data, `docutrace-export-${new Date().getTime()}.csv`);
-                        toast.success("Export successful", {
-                            description: "Your structured CSV file has been downloaded."
-                        });
+                        const approvedItems = verificationItems.map(item => ({
+                            ...item,
+                            status: (item.status === 'pending' ? 'verified' : item.status) as VerificationStatus
+                        }));
+                        setVerificationItems(approvedItems);
+                        verificationItemsRef.current = approvedItems;
+                        syncChanges(extracted, approvedItems);
+
+                        const baseName = filename
+                            ? filename.replace(/\.[^/.]+$/, "")
+                            : `docutrace-export-${new Date().getTime()}`;
+
+                        if (exportFormat === 'csv') {
+                            const targetFile = `${baseName}-verified.csv`;
+                            exportToCSV(data, targetFile);
+                            toast.success("CSV Export successful", {
+                                description: `Downloaded ${targetFile} (UTF-8 BOM, semicolon delimited for Excel).`
+                            });
+                        } else if (exportFormat === 'excel') {
+                            const targetFile = `${baseName}-verified.xls`;
+                            exportToExcel(data, targetFile);
+                            toast.success("Excel Export successful", {
+                                description: `Downloaded ${targetFile} with styled headers.`
+                            });
+                        } else if (exportFormat === 'json') {
+                            const targetFile = `${baseName}-verified.json`;
+                            exportToJSON(data, targetFile);
+                            toast.success("JSON Export successful", {
+                                description: `Downloaded clean JSON to ${targetFile}.`
+                            });
+                        }
                     }}
                 >
                     <CheckCircle2 className="w-4 h-4" />
-                    {stats.percent === 100 ? 'All Verified — Export Now' : `Approve All & Export (${stats.percent}% done)`}
+                    {stats.percent === 100
+                        ? `All Verified — Export ${exportFormat.toUpperCase()}`
+                        : `Approve All & Export (${stats.percent}% done)`}
                 </Button>
             </div>
         </div>
