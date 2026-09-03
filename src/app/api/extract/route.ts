@@ -358,9 +358,45 @@ export async function POST(req: NextRequest) {
         }, { status: 200 });
     } catch (error: any) {
         console.error("Extraction Pipeline Error:", error);
+
+        let status = 500;
+        let retryAfter: number | null = null;
+        const message = error.message || "Failed to process document.";
+
+        // Attempt to extract status code (e.g. 429, 503)
+        if (typeof error.status === 'number') {
+            status = error.status;
+        } else if (error.error && typeof error.error.code === 'number') {
+            status = error.error.code;
+        }
+
+        // Try to extract retryDelay from Google RPC details or message
+        const details = error?.error?.details || error?.details;
+        if (Array.isArray(details)) {
+            const retryInfo = details.find((d: any) => d['@type']?.includes('RetryInfo') || d.retryDelay);
+            if (retryInfo?.retryDelay) {
+                const parsedSeconds = parseInt(String(retryInfo.retryDelay).replace(/[^\d]/g, ''), 10);
+                if (!isNaN(parsedSeconds) && parsedSeconds > 0) {
+                    retryAfter = parsedSeconds;
+                }
+            }
+        }
+
+        if (!retryAfter && typeof message === 'string') {
+            const match = message.match(/retry in ([\d\.]+)s/i);
+            if (match && match[1]) {
+                retryAfter = Math.ceil(parseFloat(match[1]));
+            }
+        }
+
+        const headers: Record<string, string> = {};
+        if (retryAfter) {
+            headers["Retry-After"] = String(retryAfter);
+        }
+
         return NextResponse.json(
-            { error: error.message || "Failed to process document." },
-            { status: 500 }
+            { error: message, retryAfter: retryAfter || undefined },
+            { status, headers }
         );
     }
 }

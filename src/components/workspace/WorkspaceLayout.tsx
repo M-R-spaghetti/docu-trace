@@ -7,6 +7,8 @@ import { DataTable } from "./DataTable";
 import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+import { StreamingProgress } from "@/lib/streamingPipeline";
+
 // Dynamically import the DocumentViewer, disabling SSR. 
 // This prevents 'DOMMatrix is not defined' errors from react-pdf which relies on browser APIs.
 const DocumentViewer = dynamic(
@@ -21,9 +23,18 @@ interface WorkspaceLayoutProps {
     onRefine?: (newPrompt: string) => Promise<void>;
     onDataChange?: (updatedExtracted: any, updatedVerificationState: VerificationStateMap) => void;
     verificationState?: VerificationStateMap;
+    streamingProgress?: StreamingProgress | null;
 }
 
-export function WorkspaceLayout({ file, data, isRefining, onRefine, onDataChange, verificationState }: WorkspaceLayoutProps) {
+export function WorkspaceLayout({
+    file,
+    data,
+    isRefining,
+    onRefine,
+    onDataChange,
+    verificationState,
+    streamingProgress
+}: WorkspaceLayoutProps) {
     const [activeHighlight, setActiveHighlight] = useState<ActiveHighlight | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isFloating, setIsFloating] = useState(false);
@@ -58,12 +69,50 @@ export function WorkspaceLayout({ file, data, isRefining, onRefine, onDataChange
     };
 
     return (
-        <div className="w-full h-[calc(100vh-6rem)] max-w-none flex relative gap-2 bg-background p-2 rounded-xl">
-            {/* Main Canvas: Document Viewer */}
-            <div
-                className={`h-full flex flex-col transition-all duration-300 relative rounded-xl overflow-hidden shadow-sm border min-w-0 ${!isFloating && isSidebarOpen ? 'flex-1' : 'w-full'
-                    }`}
-            >
+        <div className="w-full h-[calc(100vh-6rem)] max-w-none flex flex-col relative gap-2 bg-background p-2 rounded-xl">
+            {streamingProgress && streamingProgress.totalPages > 1 && (
+                <div className="w-full bg-primary/10 border border-primary/20 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs font-medium shrink-0 mb-1">
+                    <div className="flex items-center gap-3">
+                        <span className="flex h-2.5 w-2.5 relative">
+                            {streamingProgress.processedPages < streamingProgress.totalPages && (
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                            )}
+                            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${streamingProgress.processedPages >= streamingProgress.totalPages ? 'bg-emerald-500' : 'bg-primary'}`}></span>
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <span className="font-semibold text-foreground">
+                                {streamingProgress.processedPages >= streamingProgress.totalPages
+                                    ? `✓ All ${streamingProgress.totalPages} Pages Extracted`
+                                    : `Progressive Streaming: Pages 1–${streamingProgress.processedPages} of ${streamingProgress.totalPages} ready`}
+                            </span>
+                            {streamingProgress.isQuotaWaiting && (
+                                <span className="text-amber-600 bg-amber-500/15 px-2.5 py-0.5 rounded-full font-mono text-[11px] animate-pulse font-medium">
+                                    ⏳ Quota cooldown: resuming in {streamingProgress.quotaWaitSeconds}s (you can review ready pages)
+                                </span>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                        <span className="text-muted-foreground font-mono">
+                            {streamingProgress.percent}%
+                        </span>
+                        <div className="w-32 h-2 bg-muted rounded-full overflow-hidden border">
+                            <div
+                                className="h-full bg-primary transition-all duration-300 rounded-full"
+                                style={{ width: `${streamingProgress.percent}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <div className="w-full flex-1 flex relative gap-2 overflow-hidden">
+                {/* Main Canvas: Document Viewer */}
+                <div
+                    className={`h-full flex flex-col transition-all duration-300 relative rounded-xl overflow-hidden shadow-sm border min-w-0 ${!isFloating && isSidebarOpen ? 'flex-1' : 'w-full'
+                        }`}
+                >
                 <div className="absolute top-4 right-4 z-50 flex gap-2">
                     {isSidebarOpen && !isFloating && (
                         <Button
@@ -181,6 +230,7 @@ export function WorkspaceLayout({ file, data, isRefining, onRefine, onDataChange
                     )}
                 </div>
             )}
+            </div>
         </div>
     );
 }

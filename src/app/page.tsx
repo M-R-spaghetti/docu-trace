@@ -8,7 +8,9 @@ import { DocumentScanner } from "@/components/upload/DocumentScanner";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
 import { BatchDashboard } from "@/components/workspace/BatchDashboard";
 import { runBatchOrchestration, BatchJob, BatchProgress } from "@/lib/batch/orchestrator";
-import { FileSearch, Trash2 } from "lucide-react";
+import { stitchImagesToPdf } from "@/lib/pdfStitcher";
+import { runStreamingPipeline, StreamingProgress } from "@/lib/streamingPipeline";
+import { FileSearch, Trash2, Layers } from "lucide-react";
 
 import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory } from "@/lib/db";
 import { VerificationStateMap } from "@/lib/types";
@@ -25,6 +27,12 @@ export default function Home() {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
+
+  // Progressive Streaming & Stitching State
+  const [streamingProgress, setStreamingProgress] = useState<StreamingProgress | null>(null);
+  const [isStitching, setIsStitching] = useState(false);
+  const [stitchProgress, setStitchProgress] = useState(0);
+  const [batchFileCount, setBatchFileCount] = useState(0);
 
   // Batch Mode States
   const [isBatchMode, setIsBatchMode] = useState(false);
@@ -72,58 +80,83 @@ export default function Home() {
       return;
     }
 
-    setIsBatchMode(true);
-    batchAbortControllerRef.current = new AbortController();
-
-    const initialJobs: BatchJob[] = files.map(f => ({
-      id: f.name,
-      filename: f.name,
-      file: f,
-      status: "queued",
-      size: f.size,
-    }));
-    setBatchJobs(initialJobs);
-    setBatchProgress({
-      total: files.length,
-      completed: 0,
-      failed: 0,
-      skipped: 0,
-      active: 0,
-      percent: 0,
-    });
+    setBatchFileCount(files.length);
+    setIsStitching(true);
+    setStitchProgress(0);
 
     try {
-      await runBatchOrchestration({
-        files,
+      // 1. Virtual client-side stitching of images into unified PDF
+      const stitchedPdf = await stitchImagesToPdf(files, (percent) => {
+        setStitchProgress(percent);
+      });
+
+      setFile(stitchedPdf);
+      setIsStitching(false);
+
+      // 2. Transition immediately into Workspace with progressive streaming!
+      setExtractedData({ items: [] });
+      setVerificationState({});
+      batchAbortControllerRef.current = new AbortController();
+
+      await runStreamingPipeline({
+        file: stitchedPdf,
         prompt: prompt || "Extract receipt or invoice information: store name, date, items with quantity and price, and total amount.",
         format: "table",
-        concurrency: 3,
-        rpm: 12,
-        onJobUpdate: (updatedJob, progress) => {
-          setBatchJobs(prev => {
-            const idx = prev.findIndex(j => j.filename === updatedJob.filename);
-            if (idx >= 0) {
-              const copy = [...prev];
-              copy[idx] = updatedJob;
-              return copy;
-            }
-            return [...prev, updatedJob];
-          });
-          setBatchProgress(progress);
+        chunkSize: 5,
+        onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
+          setExtractedData({ ...aggregatedData });
+        },
+        onProgress: (prog) => {
+          setStreamingProgress(prog);
         },
         signal: batchAbortControllerRef.current.signal,
       });
     } catch (err: any) {
-      console.error("Batch processing error:", err);
+      console.error("Progressive streaming error:", err);
+      setIsStitching(false);
     }
   };
 
   const handleExtract = async () => {
     if (!file) return;
 
-    setIsExtracting(true);
     setError(null);
 
+    // If multi-page PDF, use progressive streaming pipeline!
+    if (file.type === "application/pdf") {
+      setIsExtracting(true);
+      batchAbortControllerRef.current = new AbortController();
+
+      try {
+        let firstChunkReady = false;
+        await runStreamingPipeline({
+          file,
+          prompt: prompt.trim() || undefined,
+          format,
+          chunkSize: 5,
+          onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
+            setExtractedData({ ...aggregatedData });
+            if (!firstChunkReady) {
+              firstChunkReady = true;
+              setIsExtracting(false); // Switch to workspace immediately on first chunk!
+            }
+          },
+          onProgress: (prog) => {
+            setStreamingProgress(prog);
+          },
+          signal: batchAbortControllerRef.current.signal,
+        });
+
+        return;
+      } catch (err: any) {
+        setIsExtracting(false);
+        setError(err.message || "Extraction failed");
+        return;
+      }
+    }
+
+    // Single image extraction
+    setIsExtracting(true);
     try {
       const formData = new FormData();
       formData.append("file", file);
@@ -138,23 +171,14 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to extract data");
-        } else {
-          const textData = await response.text();
-          console.error("Non-JSON API Error:", textData);
-          throw new Error(`Server returned an unexpected error (${response.status}). Please try a valid image.`);
-        }
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server returned error (${response.status})`);
       }
 
       const data = await response.json();
-      console.log("Extracted Data:", data);
-      setExtractedData(data);
+      setExtractedData(data.data || data);
       setVerificationState({});
 
-      // Create a new session
       const sessionId = `session_${Date.now()}`;
       const recordId = Date.now().toString();
       setCurrentSessionId(sessionId);
@@ -166,7 +190,7 @@ export default function Home() {
         file,
         prompt,
         format,
-        extractedData: data,
+        extractedData: data.data || data,
         verificationState: {},
         timestamp: Date.now()
       };
@@ -174,7 +198,6 @@ export default function Home() {
       saveHistory(record).then(() => {
         setHistory(prev => [record, ...prev.filter(h => h.id !== recordId)]);
       }).catch(console.error);
-
     } catch (err: any) {
       console.error(err);
       setError(err.message || "An unexpected error occurred");
@@ -262,40 +285,16 @@ export default function Home() {
   };
 
   const handleReset = () => {
+    batchAbortControllerRef.current?.abort();
     setFile(null);
     setExtractedData(null);
     setVerificationState({});
+    setStreamingProgress(null);
+    setIsStitching(false);
     setError(null);
     setCurrentSessionId(null);
     setCurrentHistoryId(null);
   };
-
-  if (isBatchMode) {
-    return (
-      <BatchDashboard
-        jobs={batchJobs}
-        progress={batchProgress}
-        isPaused={isBatchPaused}
-        onTogglePause={() => setIsBatchPaused(p => !p)}
-        onCancel={() => {
-          batchAbortControllerRef.current?.abort();
-        }}
-        onReset={() => {
-          batchAbortControllerRef.current?.abort();
-          setIsBatchMode(false);
-          setBatchJobs([]);
-          setBatchProgress({
-            total: 0,
-            completed: 0,
-            failed: 0,
-            skipped: 0,
-            active: 0,
-            percent: 0,
-          });
-        }}
-      />
-    );
-  }
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-3.5rem)] p-4 md:p-8">
@@ -333,7 +332,26 @@ export default function Home() {
 
         <div className="relative min-h-[400px]">
           <AnimatePresence mode="wait">
-            {!file && !isExtracting && !extractedData && (
+            {isStitching && (
+              <motion.div
+                key="stitching"
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.3 }}
+                className="flex flex-col items-center justify-center p-12 text-center"
+              >
+                <div className="p-4 bg-primary/10 rounded-2xl mb-4 text-primary">
+                  <Layers className="w-10 h-10 animate-pulse" />
+                </div>
+                <h3 className="text-xl font-bold">Stitching Receipts into Unified Document...</h3>
+                <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+                  Merging {batchFileCount} receipt scans into one high-res multi-page document ({stitchProgress}%)...
+                </p>
+              </motion.div>
+            )}
+
+            {!file && !isExtracting && !isStitching && !extractedData && (
               <motion.div
                 key="upload"
                 initial={{ opacity: 0, x: -20 }}
@@ -390,7 +408,7 @@ export default function Home() {
               </motion.div>
             )}
 
-            {file && !isExtracting && !extractedData && (
+            {file && !isExtracting && !isStitching && !extractedData && (
               <motion.div
                 key="success"
                 initial={{ opacity: 0, x: -20 }}
@@ -440,6 +458,7 @@ export default function Home() {
                   onRefine={handleRefine}
                   onDataChange={handleDataChange}
                   verificationState={verificationState}
+                  streamingProgress={streamingProgress}
                 />
               </motion.div>
             )}
