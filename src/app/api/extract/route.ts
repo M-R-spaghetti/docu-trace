@@ -228,47 +228,61 @@ export async function POST(req: NextRequest) {
         const base64Data = Buffer.from(buffer).toString("base64");
         const ai = getAI();
 
-        let formatInstructions = "";
-        if (format === "table") {
-            formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Пользователь запросил только таблицу (Strict Data). Твоя JSON Schema ОДНОЗНАЧНО должна описывать структуру для извлечения массивов и четких ключей. Каждое leaf-поле — объект {value, box_2d, page}.`;
-        } else if (format === "report") {
-            formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Пользователь запросил текстовый отчет (Report). Твоя JSON Schema должна содержать поле 'markdown_text' (простая строка) для структурированного ответа в формате Markdown. Это единственное поле, которое НЕ оборачивается в {value, box_2d, page}.`;
-        } else if (format === "hybrid") {
-            formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Гибрид (Summary + Data). JSON Schema должна содержать поле 'markdown_text' (простая строка) для саммари, а также массивы/объекты для извлечения данных с координатами {value, box_2d, page}.`;
-        } else {
-            formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Авто (Auto). Самостоятельно реши, что лучше: 'markdown_text' с отчетом, табличные массивы с координатами {value, box_2d, page}, или и то и другое.`;
-        }
+        const providedSchemaRaw = formData.get("schema") as string | null;
+        let generatedSchema: any = null;
 
-        console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format);
-
-        // Step 1: Generate JSON Schema with strict JSON mode
-        const schemaResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-                {
-                    role: "user",
-                    parts: [
-                        { text: ARCHITECT_PROMPT + formatInstructions + "\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ:\n" + userQuery }
-                    ]
-                }
-            ],
-            config: {
-                responseMimeType: "application/json",
+        if (providedSchemaRaw) {
+            try {
+                generatedSchema = typeof providedSchemaRaw === 'string' ? JSON.parse(providedSchemaRaw) : providedSchemaRaw;
+                console.log("Step 1 skipped: Reusing pre-compiled batch schema.");
+            } catch (err) {
+                console.warn("Failed to parse provided schema, falling back to Architect:", err);
+                generatedSchema = null;
             }
-        });
-
-        let schemaText = schemaResponse.text || "{}";
-        schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
-
-        let generatedSchema;
-        try {
-            generatedSchema = JSON.parse(schemaText);
-        } catch (e) {
-            console.error("Architect generated invalid JSON:", schemaText);
-            throw new Error("Architect failed to generate a valid JSON schema.");
         }
 
-        console.log("Generated Schema:", JSON.stringify(generatedSchema, null, 2));
+        if (!generatedSchema) {
+            let formatInstructions = "";
+            if (format === "table") {
+                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Пользователь запросил только таблицу (Strict Data). Твоя JSON Schema ОДНОЗНАЧНО должна описывать структуру для извлечения массивов и четких ключей. Каждое leaf-поле — объект {value, box_2d, page}.`;
+            } else if (format === "report") {
+                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Пользователь запросил текстовый отчет (Report). Твоя JSON Schema должна содержать поле 'markdown_text' (простая строка) для структурированного ответа в формате Markdown. Это единственное поле, которое НЕ оборачивается в {value, box_2d, page}.`;
+            } else if (format === "hybrid") {
+                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Гибрид (Summary + Data). JSON Schema должна содержать поле 'markdown_text' (простая строка) для саммари, а также массивы/объекты для извлечения данных с координатами {value, box_2d, page}.`;
+            } else {
+                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Авто (Auto). Самостоятельно реши, что лучше: 'markdown_text' с отчетом, табличные массивы с координатами {value, box_2d, page}, или и то и другое.`;
+            }
+
+            console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format);
+
+            // Step 1: Generate JSON Schema with strict JSON mode
+            const schemaResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: ARCHITECT_PROMPT + formatInstructions + "\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ:\n" + userQuery }
+                        ]
+                    }
+                ],
+                config: {
+                    responseMimeType: "application/json",
+                }
+            });
+
+            let schemaText = schemaResponse.text || "{}";
+            schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
+
+            try {
+                generatedSchema = JSON.parse(schemaText);
+            } catch (e) {
+                console.error("Architect generated invalid JSON:", schemaText);
+                throw new Error("Architect failed to generate a valid JSON schema.");
+            }
+        }
+
+        console.log("Schema used for extraction:", JSON.stringify(generatedSchema, null, 2));
 
         // Step 2: Extract Data with spatial coordinates and enforced schema
         console.log("Step 2: Extractor extracting data with bounding boxes...");

@@ -6,6 +6,8 @@ import { DragDropZone } from "@/components/upload/DragDropZone";
 import { UploadSuccess } from "@/components/upload/UploadSuccess";
 import { DocumentScanner } from "@/components/upload/DocumentScanner";
 import { WorkspaceLayout } from "@/components/workspace/WorkspaceLayout";
+import { BatchDashboard } from "@/components/workspace/BatchDashboard";
+import { runBatchOrchestration, BatchJob, BatchProgress } from "@/lib/batch/orchestrator";
 import { FileSearch, Trash2 } from "lucide-react";
 
 import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory } from "@/lib/db";
@@ -23,6 +25,20 @@ export default function Home() {
   const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [currentHistoryId, setCurrentHistoryId] = useState<string | null>(null);
+
+  // Batch Mode States
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchJobs, setBatchJobs] = useState<BatchJob[]>([]);
+  const [batchProgress, setBatchProgress] = useState<BatchProgress>({
+    total: 0,
+    completed: 0,
+    failed: 0,
+    skipped: 0,
+    active: 0,
+    percent: 0,
+  });
+  const [isBatchPaused, setIsBatchPaused] = useState(false);
+  const batchAbortControllerRef = useRef<AbortController | null>(null);
 
   // Auto-save debouncer ref for IndexedDB persistence
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -48,6 +64,59 @@ export default function Home() {
   useEffect(() => {
     getHistory().then(setHistory).catch(console.error);
   }, []);
+
+  const handleBatchFilesAccepted = async (files: File[]) => {
+    if (!files || files.length === 0) return;
+    if (files.length === 1) {
+      setFile(files[0]);
+      return;
+    }
+
+    setIsBatchMode(true);
+    batchAbortControllerRef.current = new AbortController();
+
+    const initialJobs: BatchJob[] = files.map(f => ({
+      id: f.name,
+      filename: f.name,
+      file: f,
+      status: "queued",
+      size: f.size,
+    }));
+    setBatchJobs(initialJobs);
+    setBatchProgress({
+      total: files.length,
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+      active: 0,
+      percent: 0,
+    });
+
+    try {
+      await runBatchOrchestration({
+        files,
+        prompt: prompt || "Extract receipt or invoice information: store name, date, items with quantity and price, and total amount.",
+        format: "table",
+        concurrency: 3,
+        rpm: 12,
+        onJobUpdate: (updatedJob, progress) => {
+          setBatchJobs(prev => {
+            const idx = prev.findIndex(j => j.filename === updatedJob.filename);
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = updatedJob;
+              return copy;
+            }
+            return [...prev, updatedJob];
+          });
+          setBatchProgress(progress);
+        },
+        signal: batchAbortControllerRef.current.signal,
+      });
+    } catch (err: any) {
+      console.error("Batch processing error:", err);
+    }
+  };
 
   const handleExtract = async () => {
     if (!file) return;
@@ -201,6 +270,33 @@ export default function Home() {
     setCurrentHistoryId(null);
   };
 
+  if (isBatchMode) {
+    return (
+      <BatchDashboard
+        jobs={batchJobs}
+        progress={batchProgress}
+        isPaused={isBatchPaused}
+        onTogglePause={() => setIsBatchPaused(p => !p)}
+        onCancel={() => {
+          batchAbortControllerRef.current?.abort();
+        }}
+        onReset={() => {
+          batchAbortControllerRef.current?.abort();
+          setIsBatchMode(false);
+          setBatchJobs([]);
+          setBatchProgress({
+            total: 0,
+            completed: 0,
+            failed: 0,
+            skipped: 0,
+            active: 0,
+            percent: 0,
+          });
+        }}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col items-center justify-center min-h-[calc(100vh-3.5rem)] p-4 md:p-8">
       <div className={`w-full mx-auto space-y-12 ${extractedData ? "max-w-[1800px]" : "max-w-4xl"}`}>
@@ -246,7 +342,10 @@ export default function Home() {
                 transition={{ duration: 0.3 }}
                 className="w-full pb-12"
               >
-                <DragDropZone onFileAccepted={setFile} />
+                <DragDropZone
+                  onFileAccepted={setFile}
+                  onFilesAccepted={handleBatchFilesAccepted}
+                />
 
                 {history.length > 0 && (
                   <div className="mt-12 w-full max-w-4xl mx-auto space-y-4">

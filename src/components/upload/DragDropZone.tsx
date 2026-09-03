@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useCallback, useState } from "react";
-import { useDropzone } from "react-dropzone";
+import { useDropzone, FileRejection } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
 import { UploadCloud, File, AlertCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -10,20 +10,28 @@ import { validateDocumentFile, optimizeImageFile } from "@/lib/media";
 
 interface DragDropZoneProps {
     onFileAccepted: (file: File) => void;
+    onFilesAccepted?: (files: File[]) => void;
 }
 
-export function DragDropZone({ onFileAccepted }: DragDropZoneProps) {
+export function DragDropZone({ onFileAccepted, onFilesAccepted }: DragDropZoneProps) {
     const [error, setError] = useState<string | null>(null);
     const [isOptimizing, setIsOptimizing] = useState(false);
 
-    const onDrop = useCallback(async (acceptedFiles: File[], rejectedFiles: any[]) => {
+    const onDrop = useCallback(async (acceptedFiles: File[], rejectedFiles: FileRejection[]) => {
         if (rejectedFiles && rejectedFiles.length > 0) {
-            const firstErr = rejectedFiles[0]?.errors?.[0]?.message || "Please upload a valid PDF or Image file under 10MB.";
+            const firstErr = rejectedFiles[0]?.errors?.[0]?.message || "Please upload valid PDF or Image files.";
             setError(firstErr);
             return;
         }
 
         if (acceptedFiles && acceptedFiles.length > 0) {
+            // If multiple files dropped and batch mode is supported
+            if (acceptedFiles.length > 1 && onFilesAccepted) {
+                setError(null);
+                onFilesAccepted(acceptedFiles);
+                return;
+            }
+
             const rawFile = acceptedFiles[0];
             const validation = validateDocumentFile(rawFile);
             if (!validation.valid) {
@@ -46,7 +54,7 @@ export function DragDropZone({ onFileAccepted }: DragDropZoneProps) {
                 onFileAccepted(rawFile);
             }
         }
-    }, [onFileAccepted]);
+    }, [onFileAccepted, onFilesAccepted]);
 
     const { getRootProps, getInputProps, isDragActive, isFocused } = useDropzone({
         onDrop,
@@ -54,8 +62,8 @@ export function DragDropZone({ onFileAccepted }: DragDropZoneProps) {
             'application/pdf': ['.pdf'],
             'image/*': ['.png', '.jpg', '.jpeg', '.webp']
         },
-        maxFiles: 1,
-        maxSize: 15 * 1024 * 1024, // 15MB drop limit before client optimization
+        multiple: true,
+        maxSize: 25 * 1024 * 1024,
     });
 
     return (
@@ -118,7 +126,7 @@ export function DragDropZone({ onFileAccepted }: DragDropZoneProps) {
                                     {isDragActive ? "Drop document here" : "Upload your document"}
                                 </h3>
                                 <p className="text-sm text-muted-foreground max-w-sm">
-                                    Drag and drop your invoices or receipts here, or click to browse. Supports PDF (up to 4.5MB) and high-res images.
+                                    Drag and drop your invoices or receipts here, or click to browse. Supports single documents or batch folder drops.
                                 </p>
                             </div>
                         </motion.div>
