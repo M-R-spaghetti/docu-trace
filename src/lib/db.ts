@@ -84,3 +84,14 @@ export const deleteHistory = async (id: string): Promise<void> => {
         req.onerror = () => reject(req.error);
     });
 };
+
+export const clearAllHistory = async (): Promise<void> => {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.clear();
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+    });
+};

@@ -10,9 +10,10 @@ import { BatchDashboard } from "@/components/workspace/BatchDashboard";
 import { runBatchOrchestration, BatchJob, BatchProgress } from "@/lib/batch/orchestrator";
 import { stitchImagesToPdf } from "@/lib/pdfStitcher";
 import { runStreamingPipeline, StreamingProgress } from "@/lib/streamingPipeline";
+import { RecentExtractions } from "@/components/history/RecentExtractions";
 import { FileSearch, Trash2, Layers } from "lucide-react";
 
-import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory } from "@/lib/db";
+import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory, clearAllHistory } from "@/lib/db";
 import { VerificationStateMap } from "@/lib/types";
 
 export default function Home() {
@@ -98,12 +99,14 @@ export default function Home() {
       setVerificationState({});
       batchAbortControllerRef.current = new AbortController();
 
+      let finalAggregated: any = null;
       await runStreamingPipeline({
         file: stitchedPdf,
         prompt: prompt || "Extract receipt or invoice information: store name, date, items with quantity and price, and total amount.",
         format: "table",
         chunkSize: 5,
         onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
+          finalAggregated = aggregatedData;
           setExtractedData({ ...aggregatedData });
         },
         onProgress: (prog) => {
@@ -111,6 +114,26 @@ export default function Home() {
         },
         signal: batchAbortControllerRef.current.signal,
       });
+
+      if (finalAggregated) {
+        const sessionId = `batch_${Date.now()}`;
+        const recordId = Date.now().toString();
+        setCurrentSessionId(sessionId);
+        setCurrentHistoryId(recordId);
+
+        const record: HistoryRecord = {
+          id: recordId,
+          sessionId,
+          file: stitchedPdf,
+          prompt: prompt || "Batch extraction",
+          format: "table",
+          extractedData: finalAggregated,
+          verificationState: {},
+          timestamp: Date.now(),
+        };
+        await saveHistory(record);
+        setHistory(prev => [record, ...prev.filter(h => h.id !== recordId)]);
+      }
     } catch (err: any) {
       console.error("Progressive streaming error:", err);
       setIsStitching(false);
@@ -365,46 +388,24 @@ export default function Home() {
                   onFilesAccepted={handleBatchFilesAccepted}
                 />
 
-                {history.length > 0 && (
-                  <div className="mt-12 w-full max-w-4xl mx-auto space-y-4">
-                    <h3 className="text-xl font-semibold px-2 flex items-center gap-2">
-                      <span>🕒</span> Recent Extractions
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {history.map((record) => (
-                        <div
-                          key={record.id}
-                          className="p-4 border rounded-xl bg-card hover:shadow-md transition cursor-pointer flex justify-between items-center group"
-                          onClick={() => {
-                            setFile(record.file);
-                            setPrompt(record.prompt);
-                            setFormat(record.format);
-                            setExtractedData(record.extractedData);
-                            setVerificationState(record.verificationState || {});
-                            setCurrentSessionId(record.sessionId);
-                            setCurrentHistoryId(record.id);
-                          }}
-                        >
-                          <div className="flex flex-col truncate w-[85%]">
-                            <span className="font-medium text-sm truncate" title={record.file.name}>{record.file.name}</span>
-                            <span className="text-xs text-muted-foreground mt-1">
-                              {new Date(record.timestamp).toLocaleDateString()} • {record.format.toUpperCase()}
-                            </span>
-                          </div>
-                          <button
-                            className="opacity-0 group-hover:opacity-100 p-2 text-destructive hover:bg-destructive/10 rounded transition-all"
-                            title="Delete from history"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteHistory(record.id).then(() => setHistory(h => h.filter(x => x.id !== record.id)));
-                            }}>
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                <RecentExtractions
+                  records={history}
+                  onSelectRecord={(record) => {
+                    setFile(record.file);
+                    setPrompt(record.prompt);
+                    setFormat(record.format);
+                    setExtractedData(record.extractedData);
+                    setVerificationState(record.verificationState || {});
+                    setCurrentSessionId(record.sessionId);
+                    setCurrentHistoryId(record.id);
+                  }}
+                  onDeleteRecord={(id) => {
+                    deleteHistory(id).then(() => setHistory(h => h.filter(x => x.id !== id)));
+                  }}
+                  onClearAll={() => {
+                    clearAllHistory().then(() => setHistory([]));
+                  }}
+                />
               </motion.div>
             )}
 
