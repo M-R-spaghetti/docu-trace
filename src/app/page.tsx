@@ -88,15 +88,23 @@ export default function Home() {
     setBatchFileObjects(files);
     setBatchFileCount(files.length);
 
-    // 1. IMMEDIATE STATE SWITCH - ZERO DELAY! No monolithic PDF freezing Safari
+    // Present UploadSuccess screen so user can define what they need before extraction begins
     setFile(files[0]);
-    setExtractedData({ items: [] });
-    setVerificationState({});
+    setExtractedData(null);
+    setIsExtracting(false);
     setIsStitching(false);
-    batchAbortControllerRef.current = new AbortController();
+  };
 
-    try {
-      // 2. Background History Record: non-blocking
+  const handleExtract = async () => {
+    if (!file) return;
+
+    setError(null);
+
+    // If batch of image files was uploaded, run streaming pipeline on batch with user's prompt!
+    if (batchFileObjects && batchFileObjects.length > 1) {
+      setIsExtracting(true);
+      batchAbortControllerRef.current = new AbortController();
+
       const sessionId = `batch_${Date.now()}`;
       const recordId = Date.now().toString();
       setCurrentSessionId(sessionId);
@@ -105,53 +113,56 @@ export default function Home() {
       const initialRecord: HistoryRecord = {
         id: recordId,
         sessionId,
-        file: files[0],
-        prompt: prompt || "Batch extraction",
-        format: "table",
+        file: batchFileObjects[0],
+        prompt: prompt.trim() || "Extract all item details, quantities, prices, and totals.",
+        format,
         extractedData: { items: [] },
         verificationState: {},
         timestamp: Date.now(),
         batchInfo: {
-          totalFiles: files.length,
-          fileNames: files.map(f => f.name),
-          fileSizes: files.map(f => f.size),
+          totalFiles: batchFileObjects.length,
+          fileNames: batchFileObjects.map(f => f.name),
+          fileSizes: batchFileObjects.map(f => f.size),
         }
       };
       saveHistory(initialRecord).then(() => {
         setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
       }).catch(console.error);
 
-      // 3. Run progressive streaming pipeline with on-demand 5-image chunks!
-      let finalAggregated: any = null;
-      await runStreamingPipeline({
-        batchFiles: files,
-        prompt: prompt || "Extract receipt or invoice information: store name, date, items with quantity and price, and total amount.",
-        format: "table",
-        chunkSize: 5,
-        onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
-          finalAggregated = aggregatedData;
-          setExtractedData({ ...aggregatedData });
-          updateHistory(recordId, { extractedData: aggregatedData }).catch(console.error);
-        },
-        onProgress: (prog) => {
-          setStreamingProgress(prog);
-        },
-        signal: batchAbortControllerRef.current.signal,
-      });
+      try {
+        let firstChunkReady = false;
+        let finalAggregated: any = null;
 
-      if (finalAggregated) {
-        await updateHistory(recordId, { extractedData: finalAggregated }).catch(console.error);
+        await runStreamingPipeline({
+          batchFiles: batchFileObjects,
+          prompt: prompt.trim() || undefined,
+          format,
+          chunkSize: 5,
+          onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
+            finalAggregated = aggregatedData;
+            setExtractedData({ ...aggregatedData });
+            if (!firstChunkReady) {
+              firstChunkReady = true;
+              setIsExtracting(false); // Switch to workspace immediately on first chunk!
+            }
+            updateHistory(recordId, { extractedData: aggregatedData }).catch(console.error);
+          },
+          onProgress: (prog) => {
+            setStreamingProgress(prog);
+          },
+          signal: batchAbortControllerRef.current.signal,
+        });
+
+        if (finalAggregated) {
+          await updateHistory(recordId, { extractedData: finalAggregated }).catch(console.error);
+        }
+        return;
+      } catch (err: any) {
+        setIsExtracting(false);
+        setError(err.message || "Batch extraction failed");
+        return;
       }
-    } catch (err: any) {
-      console.error("Progressive streaming error:", err);
-      setIsStitching(false);
     }
-  };
-
-  const handleExtract = async () => {
-    if (!file) return;
-
-    setError(null);
 
     // If multi-page PDF, use progressive streaming pipeline!
     if (file.type === "application/pdf") {
@@ -446,6 +457,8 @@ export default function Home() {
                   onFormatChange={setFormat}
                   onProceed={handleExtract}
                   onReset={handleReset}
+                  batchCount={batchFileCount}
+                  batchFiles={batchFiles}
                 />
                 {error && (
                   <p className="text-destructive text-center mt-4">{error}</p>
