@@ -1,4 +1,4 @@
-import { slicePdfChunks, remapExtractedChunkPages, mergeExtractedData, PdfChunk } from "./pdfStitcher";
+import { slicePdfChunks, remapExtractedChunkPages, mergeExtractedData, PdfChunk, createChunkFromImageFiles } from "./pdfStitcher";
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -13,7 +13,8 @@ export interface StreamingProgress {
 }
 
 export interface RunStreamingPipelineOptions {
-    file: File;
+    file?: File;
+    batchFiles?: File[];
     prompt?: string;
     format?: string;
     schema?: any;
@@ -27,14 +28,28 @@ export interface RunStreamingPipelineOptions {
 
 /**
  * Executes a progressive streaming extraction pipeline:
- * Slices the PDF into chunks, fetches schema once, and streams results page by page.
+ * Slices the PDF into chunks (or generates chunks on-demand from image batch), fetches schema once, and streams results page by page.
  */
 export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): Promise<any> {
-    const bytes = await opts.file.arrayBuffer();
-    const chunks = await slicePdfChunks(bytes, opts.chunkSize ?? 5);
-    const totalChunks = chunks.length;
+    const isImageBatch = Boolean(opts.batchFiles && opts.batchFiles.length > 0);
+    const chunkSize = opts.chunkSize ?? 5;
 
-    const totalPages = chunks.reduce((acc, c) => acc + c.pageCount, 0);
+    let totalPages = 0;
+    let totalChunks = 0;
+    let precomputedChunks: PdfChunk[] | null = null;
+
+    if (isImageBatch) {
+        totalPages = opts.batchFiles!.length;
+        totalChunks = Math.ceil(totalPages / chunkSize);
+    } else if (opts.file) {
+        const bytes = await opts.file.arrayBuffer();
+        precomputedChunks = await slicePdfChunks(bytes, chunkSize);
+        totalChunks = precomputedChunks.length;
+        totalPages = precomputedChunks.reduce((acc, c) => acc + c.pageCount, 0);
+    } else {
+        throw new Error("Neither file nor batchFiles provided to streaming pipeline.");
+    }
+
     let aggregatedData: any = null;
     let processedPages = 0;
 
@@ -88,7 +103,16 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
             throw new Error("Streaming extraction was cancelled by user.");
         }
 
-        const chunk = chunks[chunkIdx];
+        let chunk: PdfChunk;
+        if (isImageBatch) {
+            const startIdx = chunkIdx * chunkSize;
+            const endIdx = Math.min(startIdx + chunkSize, totalPages);
+            const chunkImages = opts.batchFiles!.slice(startIdx, endIdx);
+            chunk = await createChunkFromImageFiles(chunkImages, startIdx, chunkIdx + 1);
+        } else {
+            chunk = precomputedChunks![chunkIdx];
+        }
+
         if (opts.onChunkStart) {
             opts.onChunkStart(chunk, chunkIdx + 1, totalChunks);
         }

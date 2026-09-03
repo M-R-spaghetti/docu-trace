@@ -35,6 +35,7 @@ export default function Home() {
   const [stitchProgress, setStitchProgress] = useState(0);
   const [batchFileCount, setBatchFileCount] = useState(0);
   const [batchFiles, setBatchFiles] = useState<{ name: string; size: number }[]>([]);
+  const [batchFileObjects, setBatchFileObjects] = useState<File[]>([]);
 
   // Batch Mode States
   const [isBatchMode, setIsBatchMode] = useState(false);
@@ -84,24 +85,18 @@ export default function Home() {
 
     const fileList = files.map(f => ({ name: f.name, size: f.size }));
     setBatchFiles(fileList);
+    setBatchFileObjects(files);
     setBatchFileCount(files.length);
-    setIsStitching(true);
-    setStitchProgress(0);
+
+    // 1. IMMEDIATE STATE SWITCH - ZERO DELAY! No monolithic PDF freezing Safari
+    setFile(files[0]);
+    setExtractedData({ items: [] });
+    setVerificationState({});
+    setIsStitching(false);
+    batchAbortControllerRef.current = new AbortController();
 
     try {
-      // 1. Virtual client-side stitching of images into unified PDF
-      const stitchedPdf = await stitchImagesToPdf(files, (percent) => {
-        setStitchProgress(percent);
-      });
-
-      // 2. IMMEDIATE STATE SWITCH - ZERO DELAY!
-      setFile(stitchedPdf);
-      setExtractedData({ items: [] });
-      setVerificationState({});
-      setIsStitching(false);
-      batchAbortControllerRef.current = new AbortController();
-
-      // 3. Background History Record: non-blocking
+      // 2. Background History Record: non-blocking
       const sessionId = `batch_${Date.now()}`;
       const recordId = Date.now().toString();
       setCurrentSessionId(sessionId);
@@ -110,7 +105,7 @@ export default function Home() {
       const initialRecord: HistoryRecord = {
         id: recordId,
         sessionId,
-        file: stitchedPdf,
+        file: files[0],
         prompt: prompt || "Batch extraction",
         format: "table",
         extractedData: { items: [] },
@@ -126,10 +121,10 @@ export default function Home() {
         setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
       }).catch(console.error);
 
-      // 4. Run progressive streaming pipeline
+      // 3. Run progressive streaming pipeline with on-demand 5-image chunks!
       let finalAggregated: any = null;
       await runStreamingPipeline({
-        file: stitchedPdf,
+        batchFiles: files,
         prompt: prompt || "Extract receipt or invoice information: store name, date, items with quantity and price, and total amount.",
         format: "table",
         chunkSize: 5,
@@ -327,6 +322,8 @@ export default function Home() {
     setVerificationState({});
     setStreamingProgress(null);
     setIsStitching(false);
+    setBatchFiles([]);
+    setBatchFileObjects([]);
     setError(null);
     setCurrentSessionId(null);
     setCurrentHistoryId(null);
@@ -485,6 +482,7 @@ export default function Home() {
                   verificationState={verificationState}
                   streamingProgress={streamingProgress}
                   batchFiles={batchFiles}
+                  batchFileObjects={batchFileObjects}
                 />
               </motion.div>
             )}

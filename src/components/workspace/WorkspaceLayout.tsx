@@ -25,6 +25,7 @@ interface WorkspaceLayoutProps {
     verificationState?: VerificationStateMap;
     streamingProgress?: StreamingProgress | null;
     batchFiles?: { name: string; size: number }[];
+    batchFileObjects?: File[];
 }
 
 export function WorkspaceLayout({
@@ -36,6 +37,7 @@ export function WorkspaceLayout({
     verificationState,
     streamingProgress,
     batchFiles,
+    batchFileObjects,
 }: WorkspaceLayoutProps) {
     const [activeHighlight, setActiveHighlight] = useState<ActiveHighlight | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -233,7 +235,7 @@ export function WorkspaceLayout({
                     )}
                 </div>
 
-                <DocumentViewer file={file} activeHighlight={activeHighlight} />
+                <DocumentViewer file={file} activeHighlight={activeHighlight} batchFiles={batchFileObjects} />
             </div>
 
             {/* Resizer Handle */}

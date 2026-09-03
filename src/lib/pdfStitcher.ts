@@ -188,3 +188,67 @@ export function mergeExtractedData(baseData: any, newChunkData: any): any {
 
     return merged;
 }
+
+/**
+ * Stitches a small subset of image files (e.g. 5 images) directly into a lightweight
+ * PDF chunk on demand, without ever creating a giant multi-page PDF in browser memory.
+ */
+export async function createChunkFromImageFiles(
+    files: File[],
+    pageOffset: number,
+    chunkIndex: number
+): Promise<PdfChunk> {
+    const doc = await PDFDocument.create();
+
+    for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (file.type === "application/pdf") {
+            try {
+                const srcBytes = await file.arrayBuffer();
+                const srcDoc = await PDFDocument.load(srcBytes);
+                const copied = await doc.copyPages(srcDoc, srcDoc.getPageIndices());
+                copied.forEach(p => doc.addPage(p));
+            } catch (err) {
+                console.warn(`Failed to copy PDF ${file.name}:`, err);
+            }
+            continue;
+        }
+
+        try {
+            const bytes = await file.arrayBuffer();
+            let img;
+            if (file.type === "image/png") {
+                try {
+                    img = await doc.embedPng(bytes);
+                } catch {
+                    img = await doc.embedJpg(bytes);
+                }
+            } else {
+                img = await doc.embedJpg(bytes);
+            }
+
+            const page = doc.addPage([img.width, img.height]);
+            page.drawImage(img, {
+                x: 0,
+                y: 0,
+                width: img.width,
+                height: img.height,
+            });
+        } catch (err) {
+            console.warn(`Failed to embed image ${file.name} into chunk:`, err);
+        }
+    }
+
+    const pdfBytes = await doc.save();
+    const chunkFile = new File([pdfBytes as any], `chunk_${chunkIndex}.pdf`, {
+        type: "application/pdf",
+    });
+
+    return {
+        chunkFile,
+        startPage: pageOffset + 1,
+        endPage: pageOffset + files.length,
+        pageOffset,
+        pageCount: files.length,
+    };
+}
