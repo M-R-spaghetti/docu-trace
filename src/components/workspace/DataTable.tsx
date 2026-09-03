@@ -111,10 +111,25 @@ export function DataTable({
     initialVerificationState,
     filename
 }: DataTableProps) {
-    const data = extracted?.data || {};
-    const schema = extracted?.schema || {};
+    const data = useMemo(() => {
+        if (!extracted) return {};
+        if (extracted.data !== undefined && typeof extracted.data === 'object' && extracted.data !== null) {
+            return extracted.data;
+        }
+        return extracted;
+    }, [extracted]);
+    const schema = useMemo(() => {
+        return extracted?.schema || {};
+    }, [extracted]);
 
     const verificationItemsRef = useRef<VerificationItem[]>([]);
+    const initialVerificationStateRef = useRef(initialVerificationState);
+
+    useEffect(() => {
+        if (initialVerificationState && Object.keys(initialVerificationState).length > 0) {
+            initialVerificationStateRef.current = initialVerificationState;
+        }
+    }, [initialVerificationState]);
 
     // Build flat verification items list from new format, preserving existing/saved statuses
     const buildVerificationItems = useCallback((): VerificationItem[] => {
@@ -134,7 +149,7 @@ export function DataTable({
 
             const id = `field_${k}`;
             const existingItem = verificationItemsRef.current.find(i => i.id === id);
-            const savedState = initialVerificationState?.[id];
+            const savedState = initialVerificationStateRef.current?.[id];
 
             const status: VerificationStatus = existingItem?.status
                 || savedState?.status
@@ -165,7 +180,7 @@ export function DataTable({
 
                 const id = `row_${arrayKey}_${idx}`;
                 const existingItem = verificationItemsRef.current.find(i => i.id === id);
-                const savedState = initialVerificationState?.[id];
+                const savedState = initialVerificationStateRef.current?.[id];
 
                 // Get first available highlight for the row
                 const firstHighlight = colKeys
@@ -200,7 +215,7 @@ export function DataTable({
         });
 
         return items;
-    }, [data, initialVerificationState]);
+    }, [data]);
 
     const [verificationItems, setVerificationItems] = useState<VerificationItem[]>(() => {
         const initial = buildVerificationItems();
