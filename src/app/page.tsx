@@ -419,8 +419,11 @@ export default function Home() {
                       setBatchFiles([]);
                     }
                   }}
-                  onDeleteRecord={(id) => {
-                    deleteHistory(id).then(() => setHistory(h => h.filter(x => x.id !== id)));
+                  onDeleteRecord={(idOrIds) => {
+                    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+                    Promise.all(ids.map(id => deleteHistory(id))).then(() => {
+                      setHistory(h => h.filter(x => !ids.includes(x.id)));
+                    });
                   }}
                   onClearAll={() => {
                     clearAllHistory().then(() => setHistory([]));
