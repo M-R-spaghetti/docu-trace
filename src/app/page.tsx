@@ -34,6 +34,7 @@ export default function Home() {
   const [isStitching, setIsStitching] = useState(false);
   const [stitchProgress, setStitchProgress] = useState(0);
   const [batchFileCount, setBatchFileCount] = useState(0);
+  const [batchFiles, setBatchFiles] = useState<{ name: string; size: number }[]>([]);
 
   // Batch Mode States
   const [isBatchMode, setIsBatchMode] = useState(false);
@@ -81,6 +82,8 @@ export default function Home() {
       return;
     }
 
+    const fileList = files.map(f => ({ name: f.name, size: f.size }));
+    setBatchFiles(fileList);
     setBatchFileCount(files.length);
     setIsStitching(true);
     setStitchProgress(0);
@@ -94,7 +97,31 @@ export default function Home() {
       setFile(stitchedPdf);
       setIsStitching(false);
 
-      // 2. Transition immediately into Workspace with progressive streaming!
+      // 2. Immediate History Record: batchInfo saved so history reflects all files immediately!
+      const sessionId = `batch_${Date.now()}`;
+      const recordId = Date.now().toString();
+      setCurrentSessionId(sessionId);
+      setCurrentHistoryId(recordId);
+
+      const initialRecord: HistoryRecord = {
+        id: recordId,
+        sessionId,
+        file: stitchedPdf,
+        prompt: prompt || "Batch extraction",
+        format: "table",
+        extractedData: { items: [] },
+        verificationState: {},
+        timestamp: Date.now(),
+        batchInfo: {
+          totalFiles: files.length,
+          fileNames: files.map(f => f.name),
+          fileSizes: files.map(f => f.size),
+        }
+      };
+      await saveHistory(initialRecord);
+      setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
+
+      // 3. Transition immediately into Workspace with progressive streaming!
       setExtractedData({ items: [] });
       setVerificationState({});
       batchAbortControllerRef.current = new AbortController();
@@ -108,6 +135,7 @@ export default function Home() {
         onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
           finalAggregated = aggregatedData;
           setExtractedData({ ...aggregatedData });
+          updateHistory(recordId, { extractedData: aggregatedData }).catch(console.error);
         },
         onProgress: (prog) => {
           setStreamingProgress(prog);
@@ -116,23 +144,7 @@ export default function Home() {
       });
 
       if (finalAggregated) {
-        const sessionId = `batch_${Date.now()}`;
-        const recordId = Date.now().toString();
-        setCurrentSessionId(sessionId);
-        setCurrentHistoryId(recordId);
-
-        const record: HistoryRecord = {
-          id: recordId,
-          sessionId,
-          file: stitchedPdf,
-          prompt: prompt || "Batch extraction",
-          format: "table",
-          extractedData: finalAggregated,
-          verificationState: {},
-          timestamp: Date.now(),
-        };
-        await saveHistory(record);
-        setHistory(prev => [record, ...prev.filter(h => h.id !== recordId)]);
+        await updateHistory(recordId, { extractedData: finalAggregated });
       }
     } catch (err: any) {
       console.error("Progressive streaming error:", err);
@@ -398,6 +410,14 @@ export default function Home() {
                     setVerificationState(record.verificationState || {});
                     setCurrentSessionId(record.sessionId);
                     setCurrentHistoryId(record.id);
+                    if (record.batchInfo?.fileNames) {
+                      setBatchFiles(record.batchInfo.fileNames.map((name, i) => ({
+                        name,
+                        size: record.batchInfo?.fileSizes?.[i] || 0
+                      })));
+                    } else {
+                      setBatchFiles([]);
+                    }
                   }}
                   onDeleteRecord={(id) => {
                     deleteHistory(id).then(() => setHistory(h => h.filter(x => x.id !== id)));
@@ -460,6 +480,7 @@ export default function Home() {
                   onDataChange={handleDataChange}
                   verificationState={verificationState}
                   streamingProgress={streamingProgress}
+                  batchFiles={batchFiles}
                 />
               </motion.div>
             )}

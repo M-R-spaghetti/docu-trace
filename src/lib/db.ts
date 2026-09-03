@@ -9,6 +9,11 @@ export interface HistoryRecord {
     extractedData: any;
     verificationState?: VerificationStateMap;
     timestamp: number;
+    batchInfo?: {
+        totalFiles: number;
+        fileNames: string[];
+        fileSizes?: number[];
+    };
 }
 
 const DB_NAME = 'docutrace_db';

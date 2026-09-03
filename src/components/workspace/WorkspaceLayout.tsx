@@ -4,7 +4,7 @@ import { useState, useRef } from "react";
 import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
-import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2 } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, Receipt, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import { StreamingProgress } from "@/lib/streamingPipeline";
@@ -24,6 +24,7 @@ interface WorkspaceLayoutProps {
     onDataChange?: (updatedExtracted: any, updatedVerificationState: VerificationStateMap) => void;
     verificationState?: VerificationStateMap;
     streamingProgress?: StreamingProgress | null;
+    batchFiles?: { name: string; size: number }[];
 }
 
 export function WorkspaceLayout({
@@ -33,11 +34,14 @@ export function WorkspaceLayout({
     onRefine,
     onDataChange,
     verificationState,
-    streamingProgress
+    streamingProgress,
+    batchFiles,
 }: WorkspaceLayoutProps) {
     const [activeHighlight, setActiveHighlight] = useState<ActiveHighlight | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isFloating, setIsFloating] = useState(false);
+    const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
+    const [filesFilter, setFilesFilter] = useState("");
     const [sidebarWidth, setSidebarWidth] = useState(450); // px
 
     // Drag resizing logic
@@ -96,7 +100,19 @@ export function WorkspaceLayout({
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2.5">
+                        {batchFiles && batchFiles.length > 1 && (
+                            <Button
+                                variant={isFilesDrawerOpen ? "default" : "outline"}
+                                size="sm"
+                                onClick={() => setIsFilesDrawerOpen(p => !p)}
+                                className="h-7 text-xs gap-1.5 shadow-xs font-semibold px-2.5"
+                                title="Список всех файлов пакета"
+                            >
+                                <Files className="w-3.5 h-3.5" />
+                                <span>{batchFiles.length} файлов</span>
+                            </Button>
+                        )}
                         <span className="text-muted-foreground font-mono">
                             {streamingProgress.percent}%
                         </span>
@@ -111,6 +127,82 @@ export function WorkspaceLayout({
             )}
 
             <div className="w-full flex-1 flex relative gap-2 overflow-hidden">
+                {/* Collapsible Batch Files Sidebar */}
+                {isFilesDrawerOpen && batchFiles && batchFiles.length > 1 && (
+                    <div className="w-72 h-full border rounded-xl bg-card flex flex-col shrink-0 overflow-hidden shadow-sm animate-in slide-in-from-left duration-200">
+                        <div className="p-3 border-b flex items-center justify-between bg-muted/20">
+                            <div className="flex items-center gap-2">
+                                <Files className="w-4 h-4 text-primary" />
+                                <span className="font-bold text-xs">Файлы пакета ({batchFiles.length})</span>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 rounded-md"
+                                onClick={() => setIsFilesDrawerOpen(false)}
+                            >
+                                <X className="w-3.5 h-3.5" />
+                            </Button>
+                        </div>
+                        <div className="p-2 border-b">
+                            <div className="relative">
+                                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                                <input
+                                    type="text"
+                                    placeholder="Поиск по файлам..."
+                                    value={filesFilter}
+                                    onChange={e => setFilesFilter(e.target.value)}
+                                    className="w-full pl-7 pr-2 py-1 text-xs rounded-md border bg-background focus:outline-none focus:ring-1 focus:ring-primary"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                            {batchFiles
+                                .map((f, idx) => ({ ...f, pageNum: idx + 1 }))
+                                .filter(f => f.name.toLowerCase().includes(filesFilter.toLowerCase()))
+                                .map((f) => {
+                                    const isDone = streamingProgress ? f.pageNum <= streamingProgress.processedPages : false;
+                                    const isCurrent = activeHighlight?.page === f.pageNum;
+                                    return (
+                                        <button
+                                            key={f.pageNum}
+                                            onClick={() => {
+                                                setActiveHighlight({
+                                                    label: f.name,
+                                                    rawValue: f.name,
+                                                    page: f.pageNum,
+                                                    box_2d: [50, 50, 200, 400]
+                                                });
+                                            }}
+                                            className={`w-full p-2 text-left rounded-lg text-xs transition-all flex items-center justify-between group ${
+                                                isCurrent
+                                                    ? 'bg-primary/15 border-primary/40 text-primary font-semibold border'
+                                                    : 'hover:bg-muted/60 border border-transparent'
+                                            }`}
+                                        >
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span className="font-mono text-[10px] text-muted-foreground w-5 text-right shrink-0">
+                                                    #{f.pageNum}
+                                                </span>
+                                                <Receipt className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                                <span className="truncate text-foreground text-xs" title={f.name}>
+                                                    {f.name}
+                                                </span>
+                                            </div>
+                                            <span className="shrink-0 ml-1">
+                                                {isDone ? (
+                                                    <span className="text-[10px] font-mono text-emerald-600 font-bold">✓ Стр.{f.pageNum}</span>
+                                                ) : (
+                                                    <span className="text-[10px] font-mono text-muted-foreground">⏳ Стр.{f.pageNum}</span>
+                                                )}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                        </div>
+                    </div>
+                )}
+
                 {/* Main Canvas: Document Viewer */}
                 <div
                     className={`h-full flex flex-col transition-all duration-300 relative rounded-xl overflow-hidden shadow-sm border min-w-0 ${!isFloating && isSidebarOpen ? 'flex-1' : 'w-full'

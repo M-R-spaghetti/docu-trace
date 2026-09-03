@@ -9,14 +9,14 @@ import {
     FileText,
     FolderArchive,
     Trash2,
-    Download,
     CheckCircle2,
     Clock,
     Search,
-    ChevronRight,
-    Sparkles,
     Layers,
-    Receipt
+    Receipt,
+    Files,
+    X,
+    ExternalLink
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -31,6 +31,8 @@ interface ParsedRecordInfo {
     record: HistoryRecord;
     isBatch: boolean;
     title: string;
+    fileCount: number;
+    fileNames: string[];
     itemCount: number;
     totalAmount: number | null;
     totalPages: number;
@@ -45,12 +47,15 @@ export function RecentExtractions({
 }: RecentExtractionsProps) {
     const [searchQuery, setSearchQuery] = useState("");
     const [filterType, setFilterType] = useState<"all" | "batches" | "single">("all");
+    const [viewingBatch, setViewingBatch] = useState<ParsedRecordInfo | null>(null);
+    const [batchFileSearch, setBatchFileSearch] = useState("");
 
     // Parse metadata for each history item
     const parsedRecords = useMemo(() => {
         return records.map((record): ParsedRecordInfo => {
             const data = record.extractedData || {};
             const isBatch =
+                Boolean(record.batchInfo && record.batchInfo.totalFiles > 1) ||
                 record.sessionId?.startsWith("batch_") ||
                 record.file?.name?.toLowerCase().includes("stitched") ||
                 record.file?.name?.toLowerCase().includes("batch");
@@ -101,17 +106,20 @@ export function RecentExtractions({
                 }
             }
 
+            const fileCount = record.batchInfo?.totalFiles || (isBatch ? maxPage : 1);
+            const fileNames = record.batchInfo?.fileNames || [];
+
             let title = record.file?.name || "Untitled Document";
-            if (isBatch) {
-                title = maxPage > 1
-                    ? `Batch Session: ${maxPage} Receipts / Pages`
-                    : `Batch Extraction (${itemCount} Items)`;
+            if (isBatch || fileCount > 1) {
+                title = `📁 Пакет: ${fileCount} файлов`;
             }
 
             return {
                 record,
-                isBatch: Boolean(isBatch),
+                isBatch: Boolean(isBatch || fileCount > 1),
                 title,
+                fileCount,
+                fileNames,
                 itemCount,
                 totalAmount,
                 totalPages: maxPage,
@@ -130,7 +138,8 @@ export function RecentExtractions({
                 const q = searchQuery.toLowerCase();
                 const matchName = item.title.toLowerCase().includes(q) || item.record.file?.name?.toLowerCase().includes(q);
                 const matchPrompt = item.record.prompt?.toLowerCase().includes(q);
-                return matchName || matchPrompt;
+                const matchFiles = item.fileNames.some(f => f.toLowerCase().includes(q));
+                return matchName || matchPrompt || matchFiles;
             }
             return true;
         });
@@ -159,7 +168,7 @@ export function RecentExtractions({
                         <span>🕒</span> Extraction History
                     </h3>
                     <Badge variant="secondary" className="font-mono text-xs">
-                        {records.length}
+                        {records.length} {records.length === 1 ? "сессия" : "сессий"}
                     </Badge>
                 </div>
 
@@ -168,7 +177,7 @@ export function RecentExtractions({
                         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                         <input
                             type="text"
-                            placeholder="Search history..."
+                            placeholder="Поиск по истории..."
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
                             className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -181,7 +190,7 @@ export function RecentExtractions({
                         onClick={onClearAll}
                         className="text-xs text-muted-foreground hover:text-destructive h-8 px-2.5"
                     >
-                        Clear All
+                        Очистить всё
                     </Button>
                 </div>
             </div>
@@ -196,7 +205,7 @@ export function RecentExtractions({
                             : "bg-muted text-muted-foreground hover:text-foreground"
                     }`}
                 >
-                    All ({parsedRecords.length})
+                    Все ({parsedRecords.length})
                 </button>
                 <button
                     onClick={() => setFilterType("batches")}
@@ -207,7 +216,7 @@ export function RecentExtractions({
                     }`}
                 >
                     <FolderArchive className="w-3 h-3" />
-                    Batches ({parsedRecords.filter(r => r.isBatch).length})
+                    Пакеты чеков ({parsedRecords.filter(r => r.isBatch).length})
                 </button>
                 <button
                     onClick={() => setFilterType("single")}
@@ -218,7 +227,7 @@ export function RecentExtractions({
                     }`}
                 >
                     <Receipt className="w-3 h-3" />
-                    Single Docs ({parsedRecords.filter(r => !r.isBatch).length})
+                    Одиночные ({parsedRecords.filter(r => !r.isBatch).length})
                 </button>
             </div>
 
@@ -230,24 +239,24 @@ export function RecentExtractions({
                         onClick={() => onSelectRecord(item.record)}
                         className="group relative p-4 rounded-xl border bg-card/60 hover:bg-card hover:border-primary/40 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between gap-3 overflow-hidden"
                     >
-                        {/* Top Line: Icon, Title, Type */}
+                        {/* Top Line: Icon, Title, Delete */}
                         <div className="flex items-start justify-between gap-2">
                             <div className="flex items-center gap-2.5 min-w-0">
-                                <div className={`p-2 rounded-lg shrink-0 ${
+                                <div className={`p-2.5 rounded-lg shrink-0 ${
                                     item.isBatch
                                         ? "bg-amber-500/10 text-amber-600"
                                         : "bg-primary/10 text-primary"
                                 }`}>
                                     {item.isBatch ? (
-                                        <Layers className="w-4 h-4" />
+                                        <Layers className="w-5 h-5" />
                                     ) : item.totalPages > 1 ? (
-                                        <FileText className="w-4 h-4" />
+                                        <FileText className="w-5 h-5" />
                                     ) : (
-                                        <Receipt className="w-4 h-4" />
+                                        <Receipt className="w-5 h-5" />
                                     )}
                                 </div>
                                 <div className="min-w-0">
-                                    <h4 className="text-sm font-semibold truncate text-foreground group-hover:text-primary transition-colors" title={item.title}>
+                                    <h4 className="text-sm font-bold truncate text-foreground group-hover:text-primary transition-colors" title={item.title}>
                                         {item.title}
                                     </h4>
                                     <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
@@ -263,23 +272,33 @@ export function RecentExtractions({
                                     onDeleteRecord(item.record.id);
                                 }}
                                 className="opacity-0 group-hover:opacity-100 p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-all"
-                                title="Delete from history"
+                                title="Удалить из истории"
                             >
                                 <Trash2 className="w-4 h-4" />
                             </button>
                         </div>
 
-                        {/* Middle Line: Extracted Stats Badges */}
+                        {/* Middle Line: Prominent Badges */}
                         <div className="flex items-center flex-wrap gap-1.5 text-xs font-mono">
+                            {item.fileCount > 1 ? (
+                                <Badge className="bg-amber-500/15 text-amber-600 border-amber-500/30 text-xs font-bold font-sans">
+                                    📦 {item.fileCount} файлов
+                                </Badge>
+                            ) : (
+                                <Badge variant="outline" className="text-[11px] font-sans">
+                                    📄 1 документ
+                                </Badge>
+                            )}
+
                             {item.totalPages > 1 && (
                                 <Badge variant="outline" className="text-[11px] font-sans">
-                                    📄 {item.totalPages} pages
+                                    📑 {item.totalPages} стр.
                                 </Badge>
                             )}
 
                             {item.itemCount > 0 && (
                                 <Badge variant="secondary" className="text-[11px] font-sans">
-                                    {item.itemCount} items
+                                    {item.itemCount} строк
                                 </Badge>
                             )}
 
@@ -292,29 +311,42 @@ export function RecentExtractions({
                             {item.verifiedPercent > 0 && (
                                 <Badge variant="outline" className="text-[11px] font-sans text-emerald-600 border-emerald-500/30">
                                     <CheckCircle2 className="w-3 h-3 mr-1" />
-                                    {item.verifiedPercent}% verified
+                                    {item.verifiedPercent}%
                                 </Badge>
                             )}
                         </div>
 
-                        {/* Bottom Actions Line on Hover */}
+                        {/* Bottom Actions Line */}
                         <div className="flex items-center justify-between pt-2 border-t border-border/40 text-xs">
-                            <span className="text-[11px] text-muted-foreground truncate max-w-[200px]" title={item.record.file.name}>
-                                {item.record.file.name}
-                            </span>
+                            {item.fileNames.length > 0 ? (
+                                <button
+                                    onClick={e => {
+                                        e.stopPropagation();
+                                        setViewingBatch(item);
+                                    }}
+                                    className="text-xs text-primary hover:underline font-medium flex items-center gap-1"
+                                >
+                                    <Files className="w-3.5 h-3.5" />
+                                    Список файлов ({item.fileNames.length})
+                                </button>
+                            ) : (
+                                <span className="text-[11px] text-muted-foreground truncate max-w-[180px]" title={item.record.file.name}>
+                                    {item.record.file.name}
+                                </span>
+                            )}
 
                             <div className="flex items-center gap-1">
                                 <button
                                     onClick={e => handleQuickExport(e, item.record, "excel")}
                                     className="px-2 py-0.5 rounded text-[11px] bg-muted hover:bg-primary/10 hover:text-primary transition-colors flex items-center gap-1 font-medium"
-                                    title="Quick Export to Excel (.xls)"
+                                    title="Скачать Excel (.xls)"
                                 >
                                     📗 Excel
                                 </button>
                                 <button
                                     onClick={e => handleQuickExport(e, item.record, "csv")}
                                     className="px-2 py-0.5 rounded text-[11px] bg-muted hover:bg-primary/10 hover:text-primary transition-colors flex items-center gap-1 font-medium"
-                                    title="Quick Export to CSV"
+                                    title="Скачать CSV"
                                 >
                                     📊 CSV
                                 </button>
@@ -323,6 +355,97 @@ export function RecentExtractions({
                     </div>
                 ))}
             </div>
+
+            {/* Modal: View All Files in Batch */}
+            {viewingBatch && (
+                <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-background border rounded-2xl shadow-2xl max-w-xl w-full max-h-[80vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <div className="p-2 rounded-lg bg-amber-500/10 text-amber-600">
+                                    <Layers className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-sm">
+                                        Файлы в пакете ({viewingBatch.fileNames.length} файлов)
+                                    </h4>
+                                    <p className="text-xs text-muted-foreground">
+                                        Все загруженные чеки и сканы этой сессии
+                                    </p>
+                                </div>
+                            </div>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 rounded-full"
+                                onClick={() => setViewingBatch(null)}
+                            >
+                                <X className="w-4 h-4" />
+                            </Button>
+                        </div>
+
+                        <div className="p-3 border-b bg-muted/20">
+                            <div className="relative">
+                                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                                <input
+                                    type="text"
+                                    placeholder="Поиск по файлам пакета..."
+                                    value={batchFileSearch}
+                                    onChange={e => setBatchFileSearch(e.target.value)}
+                                    className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border bg-background focus:outline-none focus:ring-2 focus:ring-primary/20"
+                                    autoFocus
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-3 space-y-1 divide-y divide-border/30">
+                            {viewingBatch.fileNames
+                                .filter(f => f.toLowerCase().includes(batchFileSearch.toLowerCase()))
+                                .map((filename, idx) => (
+                                    <div
+                                        key={idx}
+                                        className="py-2 px-2.5 flex items-center justify-between text-xs hover:bg-muted/40 rounded-lg transition-colors"
+                                    >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="font-mono text-muted-foreground w-6 text-right shrink-0">
+                                                #{idx + 1}
+                                            </span>
+                                            <Receipt className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                            <span className="font-medium truncate" title={filename}>
+                                                {filename}
+                                            </span>
+                                        </div>
+                                        <Badge variant="outline" className="text-[10px] font-mono shrink-0 ml-2">
+                                            Стр. {idx + 1}
+                                        </Badge>
+                                    </div>
+                                ))}
+                        </div>
+
+                        <div className="p-3 border-t bg-muted/10 flex items-center justify-between">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setViewingBatch(null)}
+                                className="text-xs h-8"
+                            >
+                                Закрыть
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={() => {
+                                    onSelectRecord(viewingBatch.record);
+                                    setViewingBatch(null);
+                                }}
+                                className="text-xs h-8 gap-1.5"
+                            >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                                Открыть рабочую область
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
