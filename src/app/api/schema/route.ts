@@ -71,7 +71,7 @@ async function generateContentWithModelFallback(ai: any, requestConfig: any) {
         } catch (err: any) {
             lastError = err;
             const status = err?.status || err?.code;
-            if (status === 503 || status === 404) {
+            if (status === 503 || status === 404 || status === 429) {
                 console.warn(`[Model Fallback] Model ${model} returned ${status}, retrying with next fallback model...`);
                 continue;
             }
