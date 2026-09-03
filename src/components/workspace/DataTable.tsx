@@ -780,16 +780,16 @@ export function DataTable({
             </div>
 
             {/* Sticky bottom actions */}
-            <div className="p-4 border-t bg-muted/10 flex-none space-y-3">
+            <div className="p-3 border-t bg-muted/10 flex-none space-y-2">
                 {/* Export Format Selector */}
                 <div className="flex items-center justify-between gap-2 px-0.5">
                     <span className="text-xs text-muted-foreground font-medium">Export format:</span>
                     <div className="flex bg-muted/60 p-0.5 rounded-lg text-xs">
                         <button
                             type="button"
-                            className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${
+                            className={`px-2 py-0.5 rounded-md transition-all font-medium flex items-center gap-1 text-xs ${
                                 exportFormat === 'csv'
-                                    ? 'bg-background text-foreground shadow-sm'
+                                    ? 'bg-background text-foreground shadow-xs'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
                             onClick={() => setExportFormat('csv')}
@@ -799,9 +799,9 @@ export function DataTable({
                         </button>
                         <button
                             type="button"
-                            className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${
+                            className={`px-2 py-0.5 rounded-md transition-all font-medium flex items-center gap-1 text-xs ${
                                 exportFormat === 'excel'
-                                    ? 'bg-background text-foreground shadow-sm'
+                                    ? 'bg-background text-foreground shadow-xs'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
                             onClick={() => setExportFormat('excel')}
@@ -811,9 +811,9 @@ export function DataTable({
                         </button>
                         <button
                             type="button"
-                            className={`px-2.5 py-1 rounded-md transition-all font-medium flex items-center gap-1 ${
+                            className={`px-2 py-0.5 rounded-md transition-all font-medium flex items-center gap-1 text-xs ${
                                 exportFormat === 'json'
-                                    ? 'bg-background text-foreground shadow-sm'
+                                    ? 'bg-background text-foreground shadow-xs'
                                     : 'text-muted-foreground hover:text-foreground'
                             }`}
                             onClick={() => setExportFormat('json')}
@@ -825,8 +825,8 @@ export function DataTable({
                 </div>
 
                 <Button
-                    className="w-full gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-lg shadow-emerald-500/20 border-0"
-                    size="lg"
+                    className="w-full gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white shadow-md shadow-emerald-500/20 border-0 h-9 text-xs font-semibold"
+                    size="default"
                     onClick={() => {
                         const approvedItems = verificationItems.map(item => ({
                             ...item,

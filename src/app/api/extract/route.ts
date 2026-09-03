@@ -253,11 +253,12 @@ export async function POST(req: NextRequest) {
                 formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Авто (Auto). Самостоятельно реши, что лучше: 'markdown_text' с отчетом, табличные массивы с координатами {value, box_2d, page}, или и то и другое.`;
             }
 
-            console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format);
+            const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-flash-latest";
+            console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format, "model:", MODEL_NAME);
 
             // Step 1: Generate JSON Schema with strict JSON mode
             const schemaResponse = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
+                model: MODEL_NAME,
                 contents: [
                     {
                         role: "user",
@@ -291,10 +292,11 @@ export async function POST(req: NextRequest) {
         // Sanitize generated schema into strict OpenAPI 3.0 subset for Gemini responseSchema
         const sanitizedSchema = sanitizeForGeminiSchema(generatedSchema);
 
+        const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-flash-latest";
         let extractionText = "{}";
         try {
             const extractionResponse = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
+                model: MODEL_NAME,
                 contents: [
                     {
                         role: "user",
@@ -322,7 +324,7 @@ export async function POST(req: NextRequest) {
             );
             // Resilient fallback without responseSchema
             const fallbackResponse = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
+                model: MODEL_NAME,
                 contents: [
                     {
                         role: "user",

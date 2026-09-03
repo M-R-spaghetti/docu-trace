@@ -42,9 +42,12 @@ export default function RootLayout({
           <ErrorBoundary>
             <div className="relative flex min-h-screen flex-col">
               <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-                <div className="container flex h-14 max-w-screen-2xl items-center px-4 md:px-8">
-                  <div className="mr-4 flex items-center gap-2">
+                <div className="container flex h-14 max-w-screen-2xl items-center justify-between px-4 md:px-8">
+                  <div className="flex items-center gap-2">
                     <span className="font-bold text-lg tracking-tight">DocuTrace AI</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <ThemeToggle />
                   </div>
                 </div>
               </header>
@@ -52,7 +55,6 @@ export default function RootLayout({
                 {children}
               </main>
             </div>
-            <ThemeToggle />
             <Toaster position="top-center" richColors />
           </ErrorBoundary>
         </ThemeProvider>

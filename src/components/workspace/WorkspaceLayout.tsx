@@ -83,11 +83,14 @@ export function WorkspaceLayout({
                             <span className="font-semibold text-foreground">
                                 {streamingProgress.processedPages >= streamingProgress.totalPages
                                     ? `✓ All ${streamingProgress.totalPages} Pages Extracted`
-                                    : `Progressive Streaming: Pages 1–${streamingProgress.processedPages} of ${streamingProgress.totalPages} ready`}
+                                    : streamingProgress.processedPages === 0
+                                        ? `Extracting Initial Chunk: Pages 1–${Math.min(5, streamingProgress.totalPages)} of ${streamingProgress.totalPages}...`
+                                        : `Progressive Streaming: Pages 1–${streamingProgress.processedPages} of ${streamingProgress.totalPages} ready`}
                             </span>
                             {streamingProgress.isQuotaWaiting && (
-                                <span className="text-amber-600 bg-amber-500/15 px-2.5 py-0.5 rounded-full font-mono text-[11px] animate-pulse font-medium">
-                                    ⏳ Quota cooldown: resuming in {streamingProgress.quotaWaitSeconds}s (you can review ready pages)
+                                <span className="inline-flex items-center gap-1.5 text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-medium shadow-xs animate-pulse">
+                                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                                    Google Rate Limit: Resuming in {streamingProgress.quotaWaitSeconds}s (you can review ready pages)
                                 </span>
                             )}
                         </div>

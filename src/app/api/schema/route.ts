@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
 
         const ai = getAI();
         const schemaResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
+            model: process.env.GEMINI_MODEL || "gemini-flash-latest",
             contents: [
                 {
                     role: "user",
