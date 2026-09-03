@@ -7,7 +7,7 @@ import { exportToCSV, exportToExcel, exportToJSON } from "@/lib/export";
 import { toast } from "sonner";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ActiveHighlight, BoundingBox, VerificationStatus, VerificationStateMap } from "@/lib/types";
+import { ActiveHighlight, BoundingBox, LocatedValue, VerificationStatus, VerificationStateMap } from "@/lib/types";
 
 interface DataTableProps {
     extracted: any;
@@ -25,7 +25,7 @@ function formatLabel(key: string) {
 }
 
 // Helper: check if a value is a LocatedValue (has value + box_2d)
-function isLocatedValue(v: any): v is { value: any; box_2d: BoundingBox; page: number } {
+function isLocatedValue(v: any): v is LocatedValue<any> {
     return v && typeof v === 'object' && 'value' in v && 'box_2d' in v && Array.isArray(v.box_2d);
 }
 
