@@ -20,11 +20,14 @@ export async function stitchImagesToPdf(
     const masterPdf = await PDFDocument.create();
     const totalFiles = files.length;
 
-    for (let i = 0; i < totalFiles; i++) {
+    for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (onProgress) {
-            onProgress(Math.round(((i + 1) / totalFiles) * 100));
+            onProgress(Math.round(((i + 1) / files.length) * 100));
         }
+
+        // Yield to browser event loop so progress bar updates smoothly without blocking main thread
+        await new Promise(r => setTimeout(r, 0));
 
         if (file.type === "application/pdf") {
             try {
@@ -69,6 +72,7 @@ export async function stitchImagesToPdf(
         }
     }
 
+    await new Promise(r => setTimeout(r, 10));
     const mergedBytes = await masterPdf.save();
     return new File([mergedBytes as any], `stitched_batch_${Date.now()}.pdf`, {
         type: "application/pdf",

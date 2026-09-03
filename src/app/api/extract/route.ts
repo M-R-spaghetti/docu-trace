@@ -191,6 +191,33 @@ const EXTRACTOR_PROMPT = `Ты — элитный Forensic Data Auditor с во�
 Фокусируйся на описаниях полей (descriptions) в JSON-структуре, чтобы точно понимать намерения создателя схемы.
 Если ты понял задачу, приступай к аудиту и верни данные в безупречном JSON формате согласно схеме.`;
 
+async function generateContentWithModelFallback(ai: any, requestConfig: any) {
+    const candidateModels = [
+        process.env.GEMINI_MODEL || "gemini-flash-latest",
+        "gemini-flash-lite-latest",
+        "gemini-3.1-flash-lite",
+    ];
+
+    let lastError: any = null;
+    for (const model of candidateModels) {
+        try {
+            return await ai.models.generateContent({
+                ...requestConfig,
+                model,
+            });
+        } catch (err: any) {
+            lastError = err;
+            const status = err?.status || err?.code;
+            if (status === 503 || status === 404) {
+                console.warn(`[Model Fallback] Model ${model} returned ${status}, retrying with next fallback model...`);
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw lastError;
+}
+
 export async function POST(req: NextRequest) {
     try {
         const formData = await req.formData();
@@ -253,12 +280,10 @@ export async function POST(req: NextRequest) {
                 formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Авто (Auto). Самостоятельно реши, что лучше: 'markdown_text' с отчетом, табличные массивы с координатами {value, box_2d, page}, или и то и другое.`;
             }
 
-            const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-flash-latest";
-            console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format, "model:", MODEL_NAME);
+            console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format);
 
-            // Step 1: Generate JSON Schema with strict JSON mode
-            const schemaResponse = await ai.models.generateContent({
-                model: MODEL_NAME,
+            // Step 1: Generate JSON Schema with strict JSON mode and model fallback
+            const schemaResponse = await generateContentWithModelFallback(ai, {
                 contents: [
                     {
                         role: "user",
@@ -292,11 +317,9 @@ export async function POST(req: NextRequest) {
         // Sanitize generated schema into strict OpenAPI 3.0 subset for Gemini responseSchema
         const sanitizedSchema = sanitizeForGeminiSchema(generatedSchema);
 
-        const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-flash-latest";
         let extractionText = "{}";
         try {
-            const extractionResponse = await ai.models.generateContent({
-                model: MODEL_NAME,
+            const extractionResponse = await generateContentWithModelFallback(ai, {
                 contents: [
                     {
                         role: "user",
@@ -323,8 +346,7 @@ export async function POST(req: NextRequest) {
                 schemaErr?.message || schemaErr
             );
             // Resilient fallback without responseSchema
-            const fallbackResponse = await ai.models.generateContent({
-                model: MODEL_NAME,
+            const fallbackResponse = await generateContentWithModelFallback(ai, {
                 contents: [
                     {
                         role: "user",

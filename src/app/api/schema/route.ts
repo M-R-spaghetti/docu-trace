@@ -54,6 +54,33 @@ const ARCHITECT_PROMPT = `Ты — Senior Data Architect и эксперт по 
 4. Описания: к каждому полю добавь содержательное description на русском или английском.
 5. Ответ строго валидный JSON Schema (draft-07 compatible). Никакого Markdown-текста вокруг!`;
 
+async function generateContentWithModelFallback(ai: any, requestConfig: any) {
+    const candidateModels = [
+        process.env.GEMINI_MODEL || "gemini-flash-latest",
+        "gemini-flash-lite-latest",
+        "gemini-3.1-flash-lite",
+    ];
+
+    let lastError: any = null;
+    for (const model of candidateModels) {
+        try {
+            return await ai.models.generateContent({
+                ...requestConfig,
+                model,
+            });
+        } catch (err: any) {
+            lastError = err;
+            const status = err?.status || err?.code;
+            if (status === 503 || status === 404) {
+                console.warn(`[Model Fallback] Model ${model} returned ${status}, retrying with next fallback model...`);
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw lastError;
+}
+
 export async function POST(req: NextRequest) {
     try {
         let userQuery = "Extract all important information, invoice numbers, line items, and totals.";
@@ -84,8 +111,7 @@ export async function POST(req: NextRequest) {
         }
 
         const ai = getAI();
-        const schemaResponse = await ai.models.generateContent({
-            model: process.env.GEMINI_MODEL || "gemini-flash-latest",
+        const schemaResponse = await generateContentWithModelFallback(ai, {
             contents: [
                 {
                     role: "user",

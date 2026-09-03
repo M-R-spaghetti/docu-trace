@@ -35,10 +35,17 @@ export const initDB = (): Promise<IDBDatabase> => {
 
 export const saveHistory = async (record: HistoryRecord): Promise<void> => {
     const db = await initDB();
+    // Safety defense: Never store > 3MB binary blobs in IndexedDB (prevents Safari DataClone freeze)
+    let safeRecord = record;
+    if (record.file && record.file.size > 3 * 1024 * 1024) {
+        const dummyFile = new File(["[STITCHED_DOC_PLACEHOLDER]"], record.file.name, { type: record.file.type });
+        safeRecord = { ...record, file: dummyFile };
+    }
+
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const req = store.put(record);
+        const req = store.put(safeRecord);
         req.onsuccess = () => resolve();
         req.onerror = () => reject(req.error);
     });

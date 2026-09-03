@@ -94,10 +94,14 @@ export default function Home() {
         setStitchProgress(percent);
       });
 
+      // 2. IMMEDIATE STATE SWITCH - ZERO DELAY!
       setFile(stitchedPdf);
+      setExtractedData({ items: [] });
+      setVerificationState({});
       setIsStitching(false);
+      batchAbortControllerRef.current = new AbortController();
 
-      // 2. Immediate History Record: batchInfo saved so history reflects all files immediately!
+      // 3. Background History Record: non-blocking
       const sessionId = `batch_${Date.now()}`;
       const recordId = Date.now().toString();
       setCurrentSessionId(sessionId);
@@ -118,14 +122,11 @@ export default function Home() {
           fileSizes: files.map(f => f.size),
         }
       };
-      await saveHistory(initialRecord);
-      setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
+      saveHistory(initialRecord).then(() => {
+        setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
+      }).catch(console.error);
 
-      // 3. Transition immediately into Workspace with progressive streaming!
-      setExtractedData({ items: [] });
-      setVerificationState({});
-      batchAbortControllerRef.current = new AbortController();
-
+      // 4. Run progressive streaming pipeline
       let finalAggregated: any = null;
       await runStreamingPipeline({
         file: stitchedPdf,
@@ -144,7 +145,7 @@ export default function Home() {
       });
 
       if (finalAggregated) {
-        await updateHistory(recordId, { extractedData: finalAggregated });
+        await updateHistory(recordId, { extractedData: finalAggregated }).catch(console.error);
       }
     } catch (err: any) {
       console.error("Progressive streaming error:", err);
