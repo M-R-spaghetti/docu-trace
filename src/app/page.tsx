@@ -474,7 +474,7 @@ export default function Home() {
                 exit={{ opacity: 0, scale: 0.95 }}
                 transition={{ duration: 0.3 }}
               >
-                <DocumentScanner />
+                <DocumentScanner fileName={file?.name} promptText={prompt} />
               </motion.div>
             )}
 

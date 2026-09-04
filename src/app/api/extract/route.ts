@@ -158,26 +158,29 @@ const EXTRACTOR_PROMPT = `Ты — элитный Forensic Data Auditor с во�
 
 async function generateContentWithModelFallback(ai: any, requestConfig: any) {
     const candidateModels = [
-        process.env.GEMINI_MODEL || "gemini-flash-latest",
-        "gemini-flash-lite-latest",
+        process.env.GEMINI_MODEL || "gemini-2.5-flash",
+        "gemini-flash-latest",
         "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
     ];
 
     let lastError: any = null;
     for (const model of candidateModels) {
         try {
-            return await ai.models.generateContent({
+            console.log(`[Model Engine] Requesting model: ${model}...`);
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error(`Timeout after 30s for model ${model}`)), 30000)
+            );
+            const contentPromise = ai.models.generateContent({
                 ...requestConfig,
                 model,
             });
+            return await Promise.race([contentPromise, timeoutPromise]);
         } catch (err: any) {
             lastError = err;
             const status = err?.status || err?.code;
-            if (status === 503 || status === 404 || status === 429) {
-                console.warn(`[Model Fallback] Model ${model} returned ${status}, retrying with next fallback model...`);
-                continue;
-            }
-            throw err;
+            console.warn(`[Model Fallback] Model ${model} failed (${err?.message || status}), retrying next candidate...`);
+            continue;
         }
     }
     throw lastError;
