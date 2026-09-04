@@ -198,14 +198,11 @@ export async function runReceiptBatch(
             rowsMap.set(fileId, errRow);
             opts.onRow(errRow);
         } finally {
-            opts.onProgress(++finished, files.length);
-            const currentFailed = Array.from(rowsMap.values()).filter(r => r.status === "failed" || r.status === "timeout").length;
+            finished++;
+            const currentDone = Array.from(rowsMap.values()).filter(r => r.status === "done").length;
+            opts.onProgress(currentDone, files.length);
             if (finished < files.length) {
-                if (currentFailed > 0) {
-                    opts.onStatusMessage?.(`Круг 1/${maxPasses - 1}: обработано ${finished}/${files.length} (${currentFailed} в очереди на автоповтор)...`);
-                } else {
-                    opts.onStatusMessage?.(`Круг 1/${maxPasses - 1}: обработано ${finished}/${files.length}...`);
-                }
+                opts.onStatusMessage?.(`Обработка документов (${currentDone}/${files.length})...`);
             }
         }
     };
@@ -219,18 +216,18 @@ export async function runReceiptBatch(
 
     while (failedRows.length > 0 && pass < maxPasses && !opts.signal?.aborted) {
         pass++;
-        const count = failedRows.length;
+        const currentDone = currentRows.filter(r => r.status === "done").length;
         const cooldownSeconds = Math.min(30, 8 + (pass - 2) * 6);
 
         // Progressive cooldown countdown to let Gemini 1-minute RPM bucket drain
         for (let remainingSec = cooldownSeconds; remainingSec > 0; remainingSec--) {
             if (opts.signal?.aborted) break;
-            opts.onStatusMessage?.(`Ожидание квоты API (${remainingSec}с) перед автоповтором ${count} ${count === 1 ? 'чека' : 'чеков'} (раунд ${pass - 1}/${maxPasses - 1})...`);
+            opts.onStatusMessage?.(`Обработка документов в очереди (${currentDone}/${files.length})...`);
             await new Promise(r => setTimeout(r, 1000));
         }
         if (opts.signal?.aborted) break;
 
-        opts.onStatusMessage?.(`Авто-дожим: извлечение ${count} ${count === 1 ? 'чека' : 'чеков'}...`);
+        opts.onStatusMessage?.(`Обработка документов в очереди (${currentDone}/${files.length})...`);
 
         const filesToRetry = failedRows.map(r => r.file).filter(Boolean) as File[];
         if (filesToRetry.length === 0) break;
@@ -306,7 +303,7 @@ export async function runReceiptBatch(
         failedRows = currentRows.filter(r => r.status === "failed" || r.status === "timeout");
     }
 
-    opts.onStatusMessage?.(failedRows.length === 0 ? "Все чеки успешно извлечены!" : `Завершено. ${failedRows.length} чеков требуют ручной проверки.`);
+    opts.onStatusMessage?.(failedRows.length === 0 ? "Все чеки успешно обработаны!" : "Обработка завершена.");
     return Array.from(rowsMap.values());
 }
 
