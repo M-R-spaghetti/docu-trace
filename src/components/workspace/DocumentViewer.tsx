@@ -64,22 +64,22 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     const fn = clean(f.name);
                     return fn === targetName || fn.includes(targetName) || targetName.includes(fn);
                 });
-                if (idx !== -1 && idx + 1 !== currentBatchPage) {
-                    setCurrentBatchPage(idx + 1);
+                if (idx !== -1) {
+                    setCurrentBatchPage(current => current === idx + 1 ? current : idx + 1);
                 }
                 // `page` is the page inside this document, not an index in the
                 // batch. Once a file identifier exists, never use it as fallback.
                 return;
             }
-            if (activeHighlight.page && activeHighlight.page !== currentBatchPage) {
+            if (activeHighlight.page) {
                 const page = Math.max(1, Math.min(activeHighlight.page, batchFiles.length));
-                setCurrentBatchPage(page);
+                setCurrentBatchPage(current => current === page ? current : page);
             }
-        } else if (isPdf && numPages && activeHighlight.page && activeHighlight.page !== currentPdfPage) {
+        } else if (isPdf && numPages && activeHighlight.page) {
             const page = Math.max(1, Math.min(activeHighlight.page, numPages));
-            setCurrentPdfPage(page);
+            setCurrentPdfPage(current => current === page ? current : page);
         }
-    }, [activeHighlight, isBatchMode, batchFiles, isPdf, numPages, currentBatchPage, currentPdfPage]);
+    }, [activeHighlight, isBatchMode, batchFiles, isPdf, numPages]);
 
     // Sync file prop changes to currentBatchPage
     useEffect(() => {
@@ -90,7 +90,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 const fn = clean(f.name);
                 return fn === currFileName || fn.includes(currFileName) || currFileName.includes(fn);
             });
-            if (idx !== -1 && idx + 1 !== currentBatchPage) {
+            if (idx !== -1) {
                 if (activeHighlight?.fileName) {
                     const targetHL = clean(activeHighlight.fileName);
                     const hlIdx = batchFiles.findIndex(f => {
@@ -101,10 +101,10 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                         return; // Let activeHighlight effect handle switching
                     }
                 }
-                setCurrentBatchPage(idx + 1);
+                setCurrentBatchPage(current => current === idx + 1 ? current : idx + 1);
             }
         }
-    }, [file, isBatchMode, batchFiles, currentBatchPage, activeHighlight]);
+    }, [file, isBatchMode, batchFiles, activeHighlight]);
 
     // Generate Object URL for the active file
     useEffect(() => {

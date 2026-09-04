@@ -84,6 +84,8 @@ interface UndoEntry {
     queueIndex: number;
 }
 
+type ReviewScope = "issues" | "quick" | "all";
+
 export function BatchDataTable({
     rows,
     selectedRowId,
@@ -102,12 +104,14 @@ export function BatchDataTable({
     const [filter, setFilter] = useState<"all" | "warnings" | "unreviewed" | "confirmed">("all");
     const [searchQuery, setSearchQuery] = useState("");
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
+    const [isReviewMenuOpen, setIsReviewMenuOpen] = useState(false);
     const [editingCell, setEditingCell] = useState<{ rowId: string; path: string } | null>(null);
     const [editValue, setEditValue] = useState("");
     const editInputRef = useRef<HTMLInputElement>(null);
 
     // Audit Review Card Mode
     const [isReviewMode, setIsReviewMode] = useState(false);
+    const [reviewScope, setReviewScope] = useState<ReviewScope>("issues");
     const [queueIndex, setQueueIndex] = useState(0);
     const [isEditingInQueue, setIsEditingInQueue] = useState(false);
     const [queueEditValue, setQueueEditValue] = useState("");
@@ -198,14 +202,28 @@ export function BatchDataTable({
         return [...Array.from(docCols), ...Array.from(itemCols)];
     }, [schema, flatRows]);
 
-    // Calculate minimum table width based on columns
+    // Keep the overview readable: detailed fields remain available in review
+    // mode and exports, while the table shows only the three most useful ones.
+    const displayColumns = useMemo(() => {
+        const priority = (key: string) => {
+            const normalized = key.toLowerCase();
+            if (/product|name|description|item/.test(normalized)) return 0;
+            if (/price|total|amount|sum|cost/.test(normalized)) return 1;
+            if (/date/.test(normalized)) return 2;
+            if (/location|store|vendor|merchant/.test(normalized)) return 3;
+            return 4;
+        };
+        return [...columns].sort((a, b) => priority(a) - priority(b)).slice(0, 3);
+    }, [columns]);
+
+    // Calculate minimum table width based on visible overview columns
     const tableMinWidth = useMemo(() => {
         let w = 36 + 72; // # (36px) + Status (72px)
-        for (const col of columns) {
+        for (const col of displayColumns) {
             w += getColWidth(col);
         }
         return Math.max(520, w);
-    }, [columns]);
+    }, [displayColumns]);
 
     // Dual metrics: accurate counts across visible cells
     const stats = useMemo(() => {
@@ -263,9 +281,9 @@ export function BatchDataTable({
         };
     }, [rows, flatRows, columns, docMap]);
 
-    // Build items for Audit Review Queue:
-    // All cells with warnings/errors + 10% representative sample of OK cells
-    const queueItems = useMemo(() => {
+    // Build three explicit human-review pools. Confirmed cells are excluded and
+    // repeated document-level fields are de-duplicated by fileId + data path.
+    const reviewPools = useMemo(() => {
         const issueItems: {
             fileId: string;
             fileName: string;
@@ -281,7 +299,8 @@ export function BatchDataTable({
             isSample: boolean;
         }[] = [];
 
-        const okItems: typeof issueItems = [];
+        const allItems: typeof issueItems = [];
+        const seen = new Set<string>();
 
         for (const fr of flatRows) {
             const parentDoc = docMap.get(fr.fileId);
@@ -291,6 +310,9 @@ export function BatchDataTable({
                 const rev = parentDoc?.reviews?.[cell.path];
                 const auto = rev?.auto ?? "ok";
                 const human = rev?.human ?? "unreviewed";
+                const stableKey = `${fr.fileId}::${cell.path}`;
+                if (human !== "unreviewed" || seen.has(stableKey)) continue;
+                seen.add(stableKey);
 
                 const itemData = {
                     fileId: fr.fileId,
@@ -307,20 +329,26 @@ export function BatchDataTable({
                     isSample: false,
                 };
 
-                if (auto !== "ok") {
-                    issueItems.push(itemData);
-                } else {
-                    okItems.push({ ...itemData, isSample: true });
-                }
+                allItems.push(itemData);
+                if (auto !== "ok") issueItems.push(itemData);
             }
         }
 
-        // Take 10% sample from okItems (minimum 1, max 10)
-        const sampleCount = Math.min(10, Math.max(1, Math.round(okItems.length * 0.10)));
-        const step = Math.max(1, Math.floor(okItems.length / sampleCount));
-        const sampledOkItems: typeof issueItems = [];
-        for (let i = 0; i < okItems.length && sampledOkItems.length < sampleCount; i += step) {
-            sampledOkItems.push(okItems[i]);
+        // Round-robin across documents gives the quick queue broad coverage.
+        const byDocument = new Map<string, typeof allItems>();
+        for (const item of allItems) {
+            const list = byDocument.get(item.fileId) || [];
+            list.push(item);
+            byDocument.set(item.fileId, list);
+        }
+        const quickItems: typeof allItems = [];
+        const documentLists = Array.from(byDocument.values()).map(items => [...items]);
+        while (quickItems.length < 10 && documentLists.some(items => items.length > 0)) {
+            for (const items of documentLists) {
+                const item = items.shift();
+                if (item) quickItems.push({ ...item, isSample: true });
+                if (quickItems.length >= 10) break;
+            }
         }
 
         // Sort issues: errors first, then warnings, then sample checks
@@ -329,10 +357,12 @@ export function BatchDataTable({
             return p(a) - p(b);
         });
 
-        return [...issueItems, ...sampledOkItems];
+        return { issues: issueItems, quick: quickItems, all: allItems };
     }, [flatRows, columns, docMap]);
 
-    type QueueItem = (typeof queueItems)[number];
+    const queueItems = reviewPools[reviewScope];
+
+    type QueueItem = (typeof reviewPools.all)[number];
     const queueItemKey = useCallback((item: QueueItem) => `${item.fileId}::${item.path}`, []);
     const [reviewQueue, setReviewQueue] = useState<QueueItem[]>([]);
 
@@ -660,29 +690,76 @@ export function BatchDataTable({
                             </Button>
                         )}
 
-                        {/* Review Mode Button */}
-                        <Button
-                            size="sm"
-                            variant={isReviewMode ? "default" : stats.autoIssuesCount > 0 ? "default" : "outline"}
-                            onClick={() => {
-                                const nextMode = !isReviewMode;
-                                setIsReviewMode(nextMode);
-                                setQueueIndex(0);
-                                if (nextMode) setReviewQueue(queueItems);
-                            }}
-                            className={`h-9 min-w-0 flex-1 gap-1.5 text-sm font-semibold shadow-xs ${
-                                isReviewMode
-                                    ? "bg-primary text-primary-foreground"
-                                    : stats.autoIssuesCount > 0
-                                    ? "bg-amber-600 hover:bg-amber-700 text-white"
-                                    : "border-primary/40 text-primary hover:bg-primary/10"
-                            }`}
-                        >
-                            <Keyboard className="w-3.5 h-3.5" />
-                            <span className="truncate">
-                                {isReviewMode ? "Все данные" : `Начать проверку (${queueItems.length})`}
-                            </span>
-                        </Button>
+                        <div className="relative flex flex-1 min-w-0">
+                            <Button
+                                size="sm"
+                                variant={isReviewMode ? "default" : stats.autoIssuesCount > 0 ? "default" : "outline"}
+                                onClick={() => {
+                                    if (isReviewMode) {
+                                        setIsReviewMode(false);
+                                        return;
+                                    }
+                                    setReviewScope("issues");
+                                    setReviewQueue(reviewPools.issues);
+                                    setQueueIndex(0);
+                                    setIsReviewMode(true);
+                                }}
+                                className={`h-9 min-w-0 flex-1 rounded-r-none gap-1.5 text-sm font-semibold shadow-xs ${
+                                    isReviewMode
+                                        ? "bg-primary text-primary-foreground"
+                                        : stats.autoIssuesCount > 0
+                                        ? "bg-amber-600 hover:bg-amber-700 text-white"
+                                        : "border-primary/40 text-primary hover:bg-primary/10"
+                                }`}
+                            >
+                                <Keyboard className="w-3.5 h-3.5 shrink-0" />
+                                <span className="truncate">
+                                    {isReviewMode ? "Все данные" : `Проверить замечания (${reviewPools.issues.length})`}
+                                </span>
+                            </Button>
+                            {!isReviewMode && (
+                                <Button
+                                    size="icon"
+                                    variant={stats.autoIssuesCount > 0 ? "default" : "outline"}
+                                    className={`h-9 w-9 rounded-l-none border-l shrink-0 ${stats.autoIssuesCount > 0 ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-500" : ""}`}
+                                    onClick={() => setIsReviewMenuOpen(open => !open)}
+                                    title="Выбрать режим проверки"
+                                >
+                                    <ChevronDown className="w-3.5 h-3.5" />
+                                </Button>
+                            )}
+
+                            {isReviewMenuOpen && !isReviewMode && (
+                                <>
+                                    <div className="fixed inset-0 z-40" onClick={() => setIsReviewMenuOpen(false)} />
+                                    <div className="absolute left-0 top-10 z-50 w-72 rounded-xl border bg-popover p-1.5 shadow-xl">
+                                        {([
+                                            ["issues", "Проверить замечания", reviewPools.issues.length, "Только поля, отмеченные машиной"],
+                                            ["quick", "Быстрая проверка", reviewPools.quick.length, "Выборка из разных документов"],
+                                            ["all", "Проверить всё вручную", reviewPools.all.length, "Все ещё не подтверждённые поля"],
+                                        ] as const).map(([scope, title, count, description]) => (
+                                            <button
+                                                key={scope}
+                                                type="button"
+                                                className="w-full rounded-lg px-3 py-2.5 text-left hover:bg-muted transition-colors"
+                                                onClick={() => {
+                                                    setReviewScope(scope);
+                                                    setReviewQueue(reviewPools[scope]);
+                                                    setQueueIndex(0);
+                                                    setIsReviewMode(true);
+                                                    setIsReviewMenuOpen(false);
+                                                }}
+                                            >
+                                                <span className="flex items-center justify-between gap-3 text-sm font-semibold">
+                                                    {title}<Badge variant="secondary">{count}</Badge>
+                                                </span>
+                                                <span className="mt-0.5 block text-xs text-muted-foreground">{description}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </div>
                     </div>
 
                     {/* Independent Export Split Dropdown */}
@@ -738,6 +815,23 @@ export function BatchDataTable({
                     </div>
                 </div>
 
+                {isProcessing ? (
+                    <div className="rounded-lg border bg-background/60 px-3 py-2.5">
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="flex items-center gap-2 font-medium">
+                                <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                Готово {stats.doneDocs} из {stats.totalDocs} документов
+                            </span>
+                            <span className="text-xs text-muted-foreground">Готовые можно проверять</span>
+                        </div>
+                        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                            <div
+                                className="h-full rounded-full bg-primary transition-all"
+                                style={{ width: `${stats.totalDocs ? (stats.doneDocs / stats.totalDocs) * 100 : 0}%` }}
+                            />
+                        </div>
+                    </div>
+                ) : <>
                 {/* Dual-Axis Metrics Bar */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
                     {/* AutoCheck (Machine) */}
@@ -787,9 +881,10 @@ export function BatchDataTable({
                         </div>
                     </div>
                 </div>
+                </>}
 
                 {/* Filter and Search Bar */}
-                {!isReviewMode && (
+                {!isReviewMode && !isProcessing && (
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/50">
                         <div className="flex items-center gap-1 flex-wrap">
                             <Button
@@ -921,8 +1016,12 @@ export function BatchDataTable({
                                 </div>
                                 <div className="text-base font-bold text-foreground">
                                     {formatHeader(currentQueueItem.colKey)}
-                                    <span className={`ml-2 align-middle text-[10px] uppercase tracking-wide ${currentQueueItem.isSample ? "text-muted-foreground" : "text-amber-600"}`}>
-                                        {currentQueueItem.isSample ? "контрольная выборка" : "требует внимания"}
+                                    <span className={`ml-2 align-middle text-[10px] uppercase tracking-wide ${currentQueueItem.auto !== "ok" ? "text-amber-600" : "text-muted-foreground"}`}>
+                                        {currentQueueItem.auto !== "ok"
+                                            ? "требует внимания"
+                                            : reviewScope === "quick"
+                                            ? "контрольная выборка"
+                                            : "ручная проверка"}
                                     </span>
                                 </div>
                             </div>
@@ -1054,12 +1153,18 @@ export function BatchDataTable({
                         <div className="flex flex-col items-center justify-center h-64 text-center">
                             <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-2" />
                             <h4 className="font-bold text-base text-foreground">
-                                {isProcessing ? "Ожидаем новые результаты…" : "Все замечания проверены!"}
+                                {isProcessing
+                                    ? "Ожидаем новые результаты…"
+                                    : reviewScope === "issues"
+                                    ? "Все замечания проверены!"
+                                    : reviewScope === "quick"
+                                    ? "Быстрая проверка завершена!"
+                                    : "Полная проверка завершена!"}
                             </h4>
                             <p className="text-xs text-muted-foreground max-w-sm mt-1">
                                 {isProcessing
                                     ? "Можно продолжать проверку — готовые поля появятся здесь автоматически."
-                                    : "Вы верифицировали все проблемные поля и контрольную выборку."}
+                                    : "Все поля выбранного режима пройдены."}
                             </p>
                             {!isProcessing && (
                                 <Button
@@ -1095,6 +1200,36 @@ export function BatchDataTable({
                         </span>
                     </div>
                 </div>
+            ) : isProcessing ? (
+                <div className="flex-1 overflow-y-auto min-h-0 p-2 space-y-1.5 bg-background/40">
+                    {groupedByDoc.map(({ doc, items }) => {
+                        const ready = doc.status === "done";
+                        const failed = doc.status === "failed" || doc.status === "timeout";
+                        return (
+                            <button
+                                key={doc.fileId}
+                                type="button"
+                                onClick={() => onSelectRow(doc)}
+                                className="w-full min-h-12 rounded-lg border bg-card px-3 py-2 text-left hover:bg-muted/50 transition-colors flex items-center gap-3"
+                            >
+                                <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                                <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-sm font-semibold">{doc.fileName}</span>
+                                    <span className="block text-xs text-muted-foreground">
+                                        {ready
+                                            ? `${Math.max(items[0]?.totalItemsInDoc || 0, items.length)} позиций найдено`
+                                            : doc.status === "extracting"
+                                            ? "Распознаём документ…"
+                                            : "В очереди на обработку…"}
+                                    </span>
+                                </span>
+                                <span className={`shrink-0 text-xs font-medium ${ready ? "text-emerald-600" : "text-muted-foreground"}`}>
+                                    {ready ? "Готово" : <Loader2 className="w-4 h-4 animate-spin" />}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
             ) : (
                 /* Master Table Mode with Sticky Document Group Headers */
                 <div className="flex-1 overflow-auto min-h-0 relative">
@@ -1102,7 +1237,7 @@ export function BatchDataTable({
                         <colgroup>
                             <col style={{ width: "36px" }} />
                             <col style={{ width: "72px" }} />
-                            {columns.map(c => (
+                            {displayColumns.map(c => (
                                 <col key={c} style={{ width: `${getColWidth(c)}px`, minWidth: `${getColWidth(c)}px` }} />
                             ))}
                         </colgroup>
@@ -1111,7 +1246,7 @@ export function BatchDataTable({
                             <tr>
                                 <th className="py-2 px-2 text-center w-9">#</th>
                                 <th className="py-2 px-2 w-[72px] text-center">Статус</th>
-                                {columns.map(col => {
+                                {displayColumns.map(col => {
                                     const type = getColType(col);
                                     const alignClass = type === "money" || type === "qty" || type === "date" ? "text-right" : "text-left";
                                     return (
@@ -1126,7 +1261,7 @@ export function BatchDataTable({
                         <tbody className="divide-y divide-border/60">
                             {filteredGroupedDocs.length === 0 ? (
                                 <tr>
-                                    <td colSpan={columns.length + 2} className="py-12 text-center text-muted-foreground font-sans">
+                                    <td colSpan={displayColumns.length + 2} className="py-12 text-center text-muted-foreground font-sans">
                                         {filter === "warnings" ? (
                                             <div className="flex flex-col items-center gap-1">
                                                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-1" />
@@ -1147,7 +1282,7 @@ export function BatchDataTable({
                                         <Fragment key={`doc-${doc.fileId}`}>
                                             {/* Sticky Group Header Row for Document */}
                                             <tr className="sticky top-[29px] z-10 bg-muted/95 backdrop-blur-xs border-y border-border/70 group/grouphead shadow-2xs">
-                                                <td colSpan={columns.length + 2} className="py-1.5 px-3 font-sans">
+                                                <td colSpan={displayColumns.length + 2} className="py-1.5 px-3 font-sans">
                                                     <div className="flex items-center justify-between gap-2">
                                                         <div
                                                             className="flex items-center gap-2 cursor-pointer min-w-0"
@@ -1272,7 +1407,7 @@ export function BatchDataTable({
                                                         </td>
 
                                                         {/* Columns */}
-                                                        {columns.map((col) => {
+                                                        {displayColumns.map((col) => {
                                                             const cell = fr.cells[col];
                                                             const node = cell?.node;
                                                             const cellVal = getDisplayValue(node);
