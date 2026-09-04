@@ -230,16 +230,19 @@ export async function createChunkFromImageFiles(
         }
 
         try {
-            const bytes = await file.arrayBuffer();
+            // Compress each image to 1500px max edge with 0.78 quality and force=true
+            // Guarantees each receipt/document is ~50-80KB and 15 images weigh only ~800KB-1MB total!
+            const optimized = await optimizeImageFile(file, 1500, 0.78, true);
+            const bytes = await optimized.arrayBuffer();
             let img;
-            if (file.type === "image/png") {
+            try {
+                img = await doc.embedJpg(bytes);
+            } catch {
                 try {
                     img = await doc.embedPng(bytes);
                 } catch {
                     img = await doc.embedJpg(bytes);
                 }
-            } else {
-                img = await doc.embedJpg(bytes);
             }
 
             const page = doc.addPage([img.width, img.height]);

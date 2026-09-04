@@ -28,20 +28,11 @@ export function validateDocumentFile(file: File): { valid: boolean; error?: stri
         };
     }
 
-    // PDF files cannot be compressed on the client without heavy libraries;
-    // warn immediately if it exceeds the serverless payload limit.
-    if (isPdf && file.size > VERCEL_PAYLOAD_LIMIT_BYTES) {
+    // Multi-page PDFs are automatically sliced into lightweight streaming chunks
+    if (file.size > 50 * 1024 * 1024) {
         return {
             valid: false,
-            error: `PDF file size (${formatBytes(file.size)}) exceeds the 4.5MB serverless limit. Please compress the PDF before uploading.`
-        };
-    }
-
-    // General sanity limit for huge files (e.g. 25MB)
-    if (file.size > 25 * 1024 * 1024) {
-        return {
-            valid: false,
-            error: `File is too large (${formatBytes(file.size)}). Maximum supported upload is 25MB.`
+            error: `File is too large (${formatBytes(file.size)}). Maximum supported upload is 50MB.`
         };
     }
 
@@ -57,7 +48,8 @@ export function validateDocumentFile(file: File): { valid: boolean; error?: stri
 export async function optimizeImageFile(
     file: File,
     maxDimension = 2048,
-    quality = 0.85
+    quality = 0.85,
+    force = false
 ): Promise<File> {
     if (!file.type.startsWith("image/")) {
         return file;
@@ -68,8 +60,8 @@ export async function optimizeImageFile(
         return file;
     }
 
-    // If file is already small (e.g. < 1.2MB), keep original bytes
-    if (file.size < 1.2 * 1024 * 1024) {
+    // If file is already small (e.g. < 1.2MB) and force is not set, keep original bytes
+    if (!force && file.size < 1.2 * 1024 * 1024) {
         return file;
     }
 
@@ -109,7 +101,7 @@ export async function optimizeImageFile(
 
             canvas.toBlob(
                 (blob) => {
-                    if (!blob || blob.size >= file.size) {
+                    if (!blob || (!force && blob.size >= file.size)) {
                         // Keep original if compression didn't produce a smaller size
                         resolve(file);
                     } else {

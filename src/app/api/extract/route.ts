@@ -13,8 +13,8 @@ const ALLOWED_MIME_TYPES = new Set([
     "image/webp"
 ]);
 
-// Configurable max payload limit in megabytes (defaults to Vercel's 4.5MB ceiling)
-const MAX_PAYLOAD_BYTES = (Number(process.env.MAX_FILE_SIZE_MB) || 4.5) * 1024 * 1024;
+// Configurable max payload limit in megabytes (defaults to 20MB, can be tuned via MAX_FILE_SIZE_MB)
+const MAX_PAYLOAD_BYTES = (Number(process.env.MAX_FILE_SIZE_MB) || 20) * 1024 * 1024;
 
 let _ai: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
