@@ -801,7 +801,7 @@ export function DataTable({
     return (
         <div ref={containerRef} className="flex flex-col h-full bg-background border rounded-xl overflow-hidden shadow-sm">
             {/* Header with progress */}
-            <div className="p-3 border-b bg-muted/20 space-y-2.5 flex-none">
+            <div className="p-3 pr-14 border-b bg-muted/20 space-y-2.5 flex-none">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <h3 className="font-semibold text-sm flex items-center gap-2">
@@ -908,69 +908,112 @@ export function DataTable({
                                 </div>
                             </div>
 
-                            <div className="bg-background/90 border rounded-lg p-3 space-y-2">
-                                <div className="flex items-center justify-between text-xs">
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-bold text-foreground text-sm">
-                                            {activeItem.label}
-                                        </span>
-                                        {activeItem.fileName && (
-                                            <span className="text-muted-foreground font-mono text-[10px]">
-                                                ({activeItem.fileName})
-                                            </span>
+                            {(() => {
+                                const activeColKey = activeItem.highlight?.columnKey;
+                                const activeCol = activeItem.columns?.find(c => c.key === activeColKey) || activeItem.columns?.[0];
+                                const isDate = activeCol ? /date/i.test(activeCol.key) : false;
+                                const rawVal = activeCol
+                                    ? (activeCol.highlight?.rawValue || activeCol.value)
+                                    : (activeItem.highlight?.rawValue || activeItem.value);
+                                const normVal = activeCol
+                                    ? (isDate ? parseDocDate(activeCol.value).display : activeCol.value)
+                                    : (activeItem.editedValue || activeItem.value);
+                                const currentFieldTitle = activeCol ? formatLabel(activeCol.key) : activeItem.label;
+
+                                return (
+                                    <div className="bg-background/90 border rounded-lg p-3 space-y-2.5">
+                                        <div className="flex items-center justify-between text-xs">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span className="font-bold text-foreground text-sm truncate">
+                                                    {activeItem.label}
+                                                </span>
+                                                <Badge variant="outline" className="text-[10px] font-mono bg-primary/5 text-primary border-primary/20 shrink-0">
+                                                    Поле: {currentFieldTitle}
+                                                </Badge>
+                                                {activeItem.fileName && (
+                                                    <span className="text-muted-foreground font-mono text-[10px] truncate max-w-[120px]" title={activeItem.fileName}>
+                                                        ({activeItem.fileName})
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {getStatusBadge(activeItem.status)}
+                                        </div>
+
+                                        {/* Raw vs Normalized Comparison */}
+                                        <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                                            <div className="p-2.5 bg-muted/40 rounded-lg border">
+                                                <span className="text-[10px] uppercase font-bold text-muted-foreground block mb-1">
+                                                    В чеке (Raw OCR)
+                                                </span>
+                                                <span className="font-mono font-bold text-foreground text-sm break-all">
+                                                    {rawVal || "—"}
+                                                </span>
+                                            </div>
+                                            <div className="p-2.5 bg-primary/5 rounded-lg border border-primary/20">
+                                                <span className="text-[10px] uppercase font-bold text-primary block mb-1">
+                                                    В системе (Нормализовано)
+                                                </span>
+                                                <span className="font-mono font-bold text-primary text-sm break-all">
+                                                    {normVal || "—"}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Column Selector Pills (if row has multiple columns) */}
+                                        {activeItem.columns && activeItem.columns.length > 1 && (
+                                            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                                                <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider mr-0.5">
+                                                    Поля строки:
+                                                </span>
+                                                {activeItem.columns.map(col => {
+                                                    const isThisColActive = col.key === activeCol?.key;
+                                                    const colIsDate = /date/i.test(col.key);
+                                                    const colDisplay = colIsDate ? parseDocDate(col.value).display : col.value;
+
+                                                    return (
+                                                        <button
+                                                            key={col.key}
+                                                            type="button"
+                                                            onClick={() => {
+                                                                if (col.highlight) {
+                                                                    setActiveHighlight(col.highlight);
+                                                                }
+                                                            }}
+                                                            className={`px-2 py-0.5 rounded-md text-[11px] font-mono border transition-all flex items-center gap-1 ${
+                                                                isThisColActive
+                                                                    ? 'bg-primary text-primary-foreground border-primary font-bold shadow-xs'
+                                                                    : 'bg-muted/40 hover:bg-muted text-muted-foreground hover:text-foreground border-transparent'
+                                                            }`}
+                                                            title={`Нажмите для подсветки ${formatLabel(col.key)}`}
+                                                        >
+                                                            <span className="opacity-70 text-[9px] uppercase">{formatLabel(col.key)}:</span>
+                                                            <span className="truncate max-w-[110px]">{colDisplay}</span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
                                         )}
-                                    </div>
-                                    {getStatusBadge(activeItem.status)}
-                                </div>
 
-                                {/* Raw vs Normalized Comparison */}
-                                <div className="grid grid-cols-2 gap-2 text-xs pt-1">
-                                    <div className="p-2.5 bg-muted/40 rounded-lg border">
-                                        <span className="text-[10px] uppercase font-bold text-muted-foreground block mb-1">
-                                            В чеке (Raw OCR)
-                                        </span>
-                                        <span className="font-mono font-bold text-foreground text-sm break-all">
-                                            {activeItem.highlight?.rawValue || activeItem.value || "—"}
-                                        </span>
+                                        {/* Actions & Hotkeys */}
+                                        <div className="flex items-center justify-between pt-1 text-[11px] text-muted-foreground gap-2 border-t border-border/50">
+                                            <div className="flex items-center gap-1.5 truncate text-[11px]">
+                                                <kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono text-[10px] text-foreground font-semibold shadow-xs">Enter</kbd>
+                                                <span>Одобрить</span>
+                                                <span className="mx-1">•</span>
+                                                <kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono text-[10px] text-foreground font-semibold shadow-xs">E</kbd>
+                                                <span>Редактировать</span>
+                                            </div>
+                                            <Button
+                                                size="sm"
+                                                className="h-7 px-3.5 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs shrink-0"
+                                                onClick={() => approveAndNext(activeItem.id)}
+                                            >
+                                                <Check className="w-3.5 h-3.5" /> Подтвердить
+                                            </Button>
+                                        </div>
                                     </div>
-                                    <div className="p-2.5 bg-primary/5 rounded-lg border border-primary/20">
-                                        <span className="text-[10px] uppercase font-bold text-primary block mb-1">
-                                            Нормализовано / В системе
-                                        </span>
-                                        <span className="font-mono font-bold text-primary text-sm break-all">
-                                            {activeItem.editedValue || activeItem.value || "—"}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                {/* Actions & Hotkeys */}
-                                <div className="flex items-center justify-between pt-1.5 text-[11px] text-muted-foreground">
-                                    <div className="flex items-center gap-1.5">
-                                        <kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono text-[10px] text-foreground font-semibold shadow-xs">Enter</kbd>
-                                        <span>Одобрить</span>
-                                        <span className="mx-1">•</span>
-                                        <kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono text-[10px] text-foreground font-semibold shadow-xs">E</kbd>
-                                        <span>Изменить</span>
-                                    </div>
-                                    <div className="flex gap-1.5">
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            className="h-7 text-xs gap-1"
-                                            onClick={() => startEditing(activeItem)}
-                                        >
-                                            <Pencil className="w-3 h-3" /> Редактировать (E)
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            className="h-7 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
-                                            onClick={() => approveAndNext(activeItem.id)}
-                                        >
-                                            <Check className="w-3.5 h-3.5" /> Подтвердить (Enter)
-                                        </Button>
-                                    </div>
-                                </div>
-                            </div>
+                                );
+                            })()}
                         </div>
                     )}
 
