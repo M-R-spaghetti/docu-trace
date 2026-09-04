@@ -144,7 +144,7 @@ export async function POST(req: NextRequest) {
                 {
                     role: "user",
                     parts: [
-                        { text: ARCHITECT_PROMPT + formatInstructions + "\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ:\n" + userQuery }
+                        { text: ARCHITECT_PROMPT + formatInstructions + "\n\nВАЖНО: схема описывает РОВНО ОДИН документ. Не создавай массивов верхнего уровня для нескольких документов — пакетную обработку выполняет вызывающий код.\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ:\n" + userQuery }
                     ]
                 }
             ],

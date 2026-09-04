@@ -39,17 +39,37 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
     const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
     const imageRef = useRef<HTMLImageElement | null>(null);
 
-    // Sync activeHighlight page to currentBatchPage or currentPdfPage
+    // Sync activeHighlight page/file to currentBatchPage or currentPdfPage
     useEffect(() => {
-        if (!activeHighlight?.page) return;
+        if (!activeHighlight) return;
         if (isBatchMode && batchFiles) {
-            const page = Math.max(1, Math.min(activeHighlight.page, batchFiles.length));
-            setCurrentBatchPage(page);
-        } else if (isPdf && numPages) {
+            if (activeHighlight.fileName || activeHighlight.fileId) {
+                const targetName = activeHighlight.fileName || activeHighlight.fileId;
+                const idx = batchFiles.findIndex(f => f.name === targetName);
+                if (idx !== -1) {
+                    setCurrentBatchPage(idx + 1);
+                    return;
+                }
+            }
+            if (activeHighlight.page) {
+                const page = Math.max(1, Math.min(activeHighlight.page, batchFiles.length));
+                setCurrentBatchPage(page);
+            }
+        } else if (isPdf && numPages && activeHighlight.page) {
             const page = Math.max(1, Math.min(activeHighlight.page, numPages));
             setCurrentPdfPage(page);
         }
     }, [activeHighlight, isBatchMode, batchFiles, isPdf, numPages]);
+
+    // Sync file prop changes to currentBatchPage
+    useEffect(() => {
+        if (isBatchMode && batchFiles && file) {
+            const idx = batchFiles.findIndex(f => f.name === file.name);
+            if (idx !== -1 && idx + 1 !== currentBatchPage) {
+                setCurrentBatchPage(idx + 1);
+            }
+        }
+    }, [file, isBatchMode, batchFiles, currentBatchPage]);
 
     // Active file to display
     const activeFile = isBatchMode && batchFiles
@@ -191,7 +211,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
     // Auto-scroll when highlight changes
     useEffect(() => {
         if (!activeHighlight) return;
-        const targetPage = activeHighlight.page || 1;
+        const targetPage = isBatchMode ? currentBatchPage : (activeHighlight.page || 1);
         const dims = pageDimensions.get(targetPage);
         const effectiveBox = (isSnapped && snappedBox) ? snappedBox : activeHighlight.box_2d;
 
@@ -203,11 +223,18 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
                 behavior: 'smooth'
             });
         }
-    }, [activeHighlight, pageDimensions, isSnapped, snappedBox]);
+    }, [activeHighlight, pageDimensions, isSnapped, snappedBox, isBatchMode, currentBatchPage]);
 
     // Render bounding box overlay
     const renderHighlightOverlay = (pageNumber: number) => {
-        if (!activeHighlight || (activeHighlight.page || 1) !== pageNumber) return null;
+        if (!activeHighlight) return null;
+
+        if (isBatchMode) {
+            // Verify current active file matches highlighted item
+            if (activeHighlight.fileName && activeFile && activeFile.name !== activeHighlight.fileName) return null;
+        } else {
+            if ((activeHighlight.page || 1) !== pageNumber) return null;
+        }
 
         const dims = pageDimensions.get(pageNumber);
         if (!dims || dims.width === 0 || dims.height === 0) return null;

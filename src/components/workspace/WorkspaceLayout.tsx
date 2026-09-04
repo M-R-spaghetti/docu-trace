@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
+import { DocRow } from "@/lib/batchTypes";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
+import { BatchDataTable } from "./BatchDataTable";
 import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, FileText, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -26,6 +28,10 @@ interface WorkspaceLayoutProps {
     streamingProgress?: StreamingProgress | null;
     batchFiles?: { name: string; size: number }[];
     batchFileObjects?: File[];
+    batchRows?: DocRow[];
+    onBatchRowsChange?: (rows: DocRow[]) => void;
+    schema?: any;
+    isProcessingBatch?: boolean;
 }
 
 export function WorkspaceLayout({
@@ -38,13 +44,27 @@ export function WorkspaceLayout({
     streamingProgress,
     batchFiles,
     batchFileObjects,
+    batchRows,
+    onBatchRowsChange,
+    schema,
+    isProcessingBatch,
 }: WorkspaceLayoutProps) {
+    const isBatchMode = Boolean(batchRows && batchRows.length > 0);
+    const [selectedBatchFile, setSelectedBatchFile] = useState<File>(file);
+    const [selectedBatchRowId, setSelectedBatchRowId] = useState<string | undefined>(undefined);
     const [activeHighlight, setActiveHighlight] = useState<ActiveHighlight | null>(null);
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isFloating, setIsFloating] = useState(false);
     const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
     const [filesFilter, setFilesFilter] = useState("");
-    const [sidebarWidth, setSidebarWidth] = useState(450); // px
+    const [sidebarWidth, setSidebarWidth] = useState(isBatchMode ? 650 : 450); // px
+
+    useEffect(() => {
+        if (isBatchMode && batchRows && batchRows.length > 0 && !selectedBatchRowId) {
+            setSelectedBatchRowId(batchRows[0].fileId);
+            if (batchRows[0].file) setSelectedBatchFile(batchRows[0].file);
+        }
+    }, [isBatchMode, batchRows, selectedBatchRowId]);
 
     // Drag resizing logic
     const isDragging = useRef(false);
@@ -235,7 +255,7 @@ export function WorkspaceLayout({
                     )}
                 </div>
 
-                <DocumentViewer file={file} activeHighlight={activeHighlight} batchFiles={batchFileObjects} />
+                <DocumentViewer file={selectedBatchFile || file} activeHighlight={activeHighlight} batchFiles={batchFileObjects} />
             </div>
 
             {/* Resizer Handle */}
@@ -280,15 +300,66 @@ export function WorkspaceLayout({
                         </Button>
                     </div>
 
-                    {/* DataTable component takes the full space */}
+                    {/* DataTable or BatchDataTable takes the full space */}
                     <div className="w-full flex-1 overflow-hidden">
-                        <DataTable
-                            extracted={data}
-                            setActiveHighlight={setActiveHighlight}
-                            onDataChange={onDataChange}
-                            initialVerificationState={verificationState}
-                            filename={file.name}
-                        />
+                        {isBatchMode && batchRows ? (
+                            <BatchDataTable
+                                rows={batchRows}
+                                selectedRowId={selectedBatchRowId}
+                                onSelectRow={(row) => {
+                                    setSelectedBatchRowId(row.fileId);
+                                    if (row.file) setSelectedBatchFile(row.file);
+                                }}
+                                onSelectCellHighlight={(row, colKey, hl) => {
+                                    setSelectedBatchRowId(row.fileId);
+                                    if (row.file) setSelectedBatchFile(row.file);
+                                    setActiveHighlight(hl);
+                                }}
+                                onUpdateCell={(rowId, colKey, newVal) => {
+                                    if (!onBatchRowsChange) return;
+                                    const updated = batchRows.map(r => {
+                                        if (r.fileId === rowId) {
+                                            const existingCell = r.data?.[colKey];
+                                            const updatedCell = existingCell && typeof existingCell === 'object'
+                                                ? { ...existingCell, value: newVal, originalValue: existingCell.originalValue ?? existingCell.value }
+                                                : { value: newVal, box_2d: [0, 0, 0, 0], page: 1 };
+                                            return {
+                                                ...r,
+                                                data: { ...r.data, [colKey]: updatedCell },
+                                                verified: { ...r.verified, [colKey]: 'edited' as const },
+                                            };
+                                        }
+                                        return r;
+                                    });
+                                    onBatchRowsChange(updated);
+                                }}
+                                onToggleVerifyCell={(rowId, colKey) => {
+                                    if (!onBatchRowsChange) return;
+                                    const updated = batchRows.map(r => {
+                                        if (r.fileId === rowId) {
+                                            const currentStatus = r.verified?.[colKey] || 'pending';
+                                            const nextStatus = currentStatus === 'verified' ? ('pending' as const) : ('verified' as const);
+                                            return {
+                                                ...r,
+                                                verified: { ...r.verified, [colKey]: nextStatus },
+                                            };
+                                        }
+                                        return r;
+                                    });
+                                    onBatchRowsChange(updated);
+                                }}
+                                schema={schema}
+                                isProcessing={isProcessingBatch}
+                            />
+                        ) : (
+                            <DataTable
+                                extracted={data}
+                                setActiveHighlight={setActiveHighlight}
+                                onDataChange={onDataChange}
+                                initialVerificationState={verificationState}
+                                filename={file.name}
+                            />
+                        )}
                     </div>
 
                     {/* Secondary Refinement Chat */}

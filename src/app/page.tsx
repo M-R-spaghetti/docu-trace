@@ -15,6 +15,8 @@ import { FileSearch, Trash2, Layers } from "lucide-react";
 
 import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory, clearAllHistory } from "@/lib/db";
 import { VerificationStateMap } from "@/lib/types";
+import { runReceiptBatch } from "@/lib/runReceiptBatch";
+import { DocRow } from "@/lib/batchTypes";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -39,6 +41,11 @@ export default function Home() {
 
   // Batch Mode States
   const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchRows, setBatchRows] = useState<DocRow[]>([]);
+  const [batchSchema, setBatchSchema] = useState<any>(null);
+  const [batchCompletedCount, setBatchCompletedCount] = useState(0);
+  const [batchTotalCount, setBatchTotalCount] = useState(0);
+  const [isProcessingBatch, setIsProcessingBatch] = useState(false);
   const [batchJobs, setBatchJobs] = useState<BatchJob[]>([]);
   const [batchProgress, setBatchProgress] = useState<BatchProgress>({
     total: 0,
@@ -100,9 +107,11 @@ export default function Home() {
 
     setError(null);
 
-    // If batch of image files was uploaded, run streaming pipeline on batch with user's prompt!
+    // If batch of files was uploaded, run individual receipt batch with single-document schema!
     if (batchFileObjects && batchFileObjects.length > 1) {
       setIsExtracting(true);
+      setIsProcessingBatch(true);
+      setIsBatchMode(true);
       batchAbortControllerRef.current = new AbortController();
 
       const sessionId = `batch_${Date.now()}`;
@@ -110,55 +119,72 @@ export default function Home() {
       setCurrentSessionId(sessionId);
       setCurrentHistoryId(recordId);
 
-      const initialRecord: HistoryRecord = {
-        id: recordId,
-        sessionId,
-        file: batchFileObjects[0],
-        prompt: prompt.trim() || "Extract all key entities, structured tables, and important data points from this document.",
-        format,
-        extractedData: { items: [] },
-        verificationState: {},
-        timestamp: Date.now(),
-        batchInfo: {
-          totalFiles: batchFileObjects.length,
-          fileNames: batchFileObjects.map(f => f.name),
-          fileSizes: batchFileObjects.map(f => f.size),
-        }
-      };
-      saveHistory(initialRecord).then(() => {
-        setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
-      }).catch(console.error);
-
       try {
-        let firstChunkReady = false;
-        let finalAggregated: any = null;
+        // Step 1: Request single-document schema ONCE upfront
+        const schemaRes = await fetch("/api/schema", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: prompt.trim() || "Extract store name, date, total, and items.",
+            format: "table",
+          }),
+          signal: batchAbortControllerRef.current.signal,
+        });
 
-        await runStreamingPipeline({
-          batchFiles: batchFileObjects,
+        if (!schemaRes.ok) {
+          throw new Error("Failed to generate shared schema for batch.");
+        }
+
+        const { schema: masterSchema } = await schemaRes.json();
+        setBatchSchema(masterSchema);
+
+        // Step 2: Initialize placeholder rows for immediate UI render
+        const initialRows: DocRow[] = batchFileObjects.map(f => ({
+          fileId: f.name,
+          fileName: f.name,
+          file: f,
+          data: {},
+          status: "queued",
+          verified: {},
+        }));
+        setBatchRows(initialRows);
+        setBatchTotalCount(batchFileObjects.length);
+        setBatchCompletedCount(0);
+
+        // Switch to workspace immediately so the user sees all files in the master table!
+        setExtractedData({ batch: true, schema: masterSchema });
+        setIsExtracting(false);
+
+        // Step 3: Run the per-document rate-limited extraction
+        await runReceiptBatch(batchFileObjects, masterSchema, {
           prompt: prompt.trim() || undefined,
-          format,
-          chunkSize: 15,
-          onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
-            finalAggregated = aggregatedData;
-            setExtractedData({ ...aggregatedData });
-            if (!firstChunkReady) {
-              firstChunkReady = true;
-              setIsExtracting(false); // Switch to workspace immediately on first chunk!
-            }
-            updateHistory(recordId, { extractedData: aggregatedData }).catch(console.error);
+          format: "table",
+          sessionId,
+          concurrency: 4,
+          rpm: 12,
+          onRow: (row) => {
+            setBatchRows(prev => {
+              const idx = prev.findIndex(r => r.fileName === row.fileName || r.fileId === row.fileId);
+              if (idx !== -1) {
+                const updated = [...prev];
+                updated[idx] = row;
+                return updated;
+              }
+              return [...prev, row];
+            });
           },
-          onProgress: (prog) => {
-            setStreamingProgress(prog);
+          onProgress: (done, total) => {
+            setBatchCompletedCount(done);
+            setBatchTotalCount(total);
           },
           signal: batchAbortControllerRef.current.signal,
         });
 
-        if (finalAggregated) {
-          await updateHistory(recordId, { extractedData: finalAggregated }).catch(console.error);
-        }
+        setIsProcessingBatch(false);
         return;
       } catch (err: any) {
         setIsExtracting(false);
+        setIsProcessingBatch(false);
         setError(err.message || "Batch extraction failed");
         return;
       }
@@ -362,6 +388,12 @@ export default function Home() {
     setIsStitching(false);
     setBatchFiles([]);
     setBatchFileObjects([]);
+    setIsBatchMode(false);
+    setBatchRows([]);
+    setBatchSchema(null);
+    setBatchCompletedCount(0);
+    setBatchTotalCount(0);
+    setIsProcessingBatch(false);
     setError(null);
     setCurrentSessionId(null);
     setCurrentHistoryId(null);
@@ -523,6 +555,10 @@ export default function Home() {
                   streamingProgress={streamingProgress}
                   batchFiles={batchFiles}
                   batchFileObjects={batchFileObjects}
+                  batchRows={batchRows}
+                  onBatchRowsChange={setBatchRows}
+                  schema={batchSchema}
+                  isProcessingBatch={isProcessingBatch}
                 />
               </motion.div>
             )}

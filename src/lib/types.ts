@@ -24,6 +24,9 @@ export interface ActiveHighlight {
     page: number;
     label?: string; // Optional label to show near the box
     rawValue?: string; // Extracted text value for vector text snapping via pdf.js
+    fileId?: string; // File ID for batch mode
+    fileName?: string; // File name for batch mode
+    columnKey?: string; // Column/field name
 }
 
 // Legacy types kept for reference but no longer used in the new pipeline

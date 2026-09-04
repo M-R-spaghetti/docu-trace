@@ -4,6 +4,8 @@
 // 2. Excel SpreadsheetML (.xls with styled headers and typed numeric/string cells)
 // 3. Clean JSON (.json with unwrapped values for API/database integration)
 
+import type { DocRow } from "./batchTypes";
+
 function isLocatedValue(v: any): boolean {
     return v && typeof v === 'object' && 'value' in v && 'box_2d' in v;
 }
@@ -79,6 +81,28 @@ function downloadBlob(blob: Blob, filename: string) {
     URL.revokeObjectURL(url);
 }
 
+function escapeCSVValue(val: any): string {
+    const cleaned = String(val ?? '').replace(/"/g, '""');
+    if (
+        cleaned.includes(';') ||
+        cleaned.includes(',') ||
+        cleaned.includes('\n') ||
+        cleaned.includes('\r') ||
+        cleaned.includes('"')
+    ) {
+        return `"${cleaned}"`;
+    }
+    return cleaned;
+}
+
+function escapeXml(val: any): string {
+    return String(val ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 /**
  * Export to CSV with UTF-8 BOM (\uFEFF) and semicolon (;) delimiter.
  * Guarantees that Ukrainian/Cyrillic and European Excel versions open the file
@@ -92,20 +116,7 @@ export function exportToCSV(data: any, filename: string = "docutrace-export.csv"
 
     // Format with semicolon delimiter and RFC 4180 escaping
     const csvContent = allRows.map(row =>
-        row.map(cell => {
-            const cleanedCell = String(cell ?? '').replace(/"/g, '""');
-            // If cell contains semicolon, comma, newline, or double quote, wrap in double quotes
-            if (
-                cleanedCell.includes(';') ||
-                cleanedCell.includes(',') ||
-                cleanedCell.includes('\n') ||
-                cleanedCell.includes('\r') ||
-                cleanedCell.includes('"')
-            ) {
-                return `"${cleanedCell}"`;
-            }
-            return cleanedCell;
-        }).join(";")
+        row.map(escapeCSVValue).join(";")
     ).join("\r\n");
 
     // Prepend UTF-8 BOM (\uFEFF) so Excel for Windows & Mac automatically detects UTF-8
@@ -122,14 +133,6 @@ export function exportToCSV(data: any, filename: string = "docutrace-export.csv"
 export function exportToExcel(data: any, filename: string = "docutrace-export.xls") {
     const { headers, rows } = extractTableRows(data);
     if (headers.length === 0 && rows.length === 0) return;
-
-    const escapeXml = (val: string): string => {
-        return String(val ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    };
 
     const isNumeric = (val: string): boolean => {
         if (!val || typeof val !== 'string') return false;
@@ -225,6 +228,130 @@ export function exportToJSON(data: any, filename: string = "docutrace-export.jso
     const jsonString = JSON.stringify(cleanData, null, 2);
 
     const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+    const cleanFilename = filename.toLowerCase().endsWith('.json') ? filename : `${filename}.json`;
+    downloadBlob(blob, cleanFilename);
+}
+
+/**
+ * Compiles an array of DocRow items into a flat tabular format
+ * with "Source File", "Status", and each extracted field column.
+ */
+export function compileBatchExportData(rows: DocRow[]): { headers: string[]; dataRows: string[][] } {
+    if (!rows || rows.length === 0) return { headers: [], dataRows: [] };
+
+    const fieldKeysSet = new Set<string>();
+    for (const r of rows) {
+        if (r.data && typeof r.data === "object") {
+            for (const k of Object.keys(r.data)) {
+                if (k === "markdown_text") continue;
+                fieldKeysSet.add(k);
+            }
+        }
+    }
+    const fieldKeys = Array.from(fieldKeysSet);
+
+    const headers = [
+        "Source File",
+        "Status",
+        ...fieldKeys.map(k => k.replace(/_/g, " ").replace(/^./, s => s.toUpperCase()))
+    ];
+
+    const dataRows = rows.map(r => {
+        const status = r.status;
+        const fieldVals = fieldKeys.map(k => {
+            const rawVal = r.data?.[k];
+            if (rawVal === undefined || rawVal === null) return "";
+            if (isLocatedValue(rawVal)) return String(rawVal.value ?? "");
+            return String(rawVal);
+        });
+        return [r.fileName, status, ...fieldVals];
+    });
+
+    return { headers, dataRows };
+}
+
+export function exportBatchToCSV(rows: DocRow[], filename = "batch_export.csv") {
+    const { headers, dataRows } = compileBatchExportData(rows);
+    if (headers.length === 0) return;
+
+    const csvLines: string[] = [];
+    csvLines.push(headers.map(escapeCSVValue).join(';'));
+    for (const row of dataRows) {
+        csvLines.push(row.map(escapeCSVValue).join(';'));
+    }
+
+    const csvContent = '\uFEFF' + csvLines.join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const cleanFilename = filename.toLowerCase().endsWith('.csv') ? filename : `${filename}.csv`;
+    downloadBlob(blob, cleanFilename);
+}
+
+export function exportBatchToExcel(rows: DocRow[], filename = "batch_export.xls") {
+    const { headers, dataRows } = compileBatchExportData(rows);
+    if (headers.length === 0) return;
+
+    const xmlParts: string[] = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<?mso-application progid="Excel.Sheet"?>',
+        '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"',
+        ' xmlns:o="urn:schemas-microsoft-com:office:office"',
+        ' xmlns:x="urn:schemas-microsoft-com:office:excel"',
+        ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"',
+        ' xmlns:html="http://www.w3.org/TR/REC-html40">',
+        ' <Styles>',
+        '  <Style ss:ID="Header">',
+        '   <Font ss:Bold="1" ss:Color="#FFFFFF"/>',
+        '   <Interior ss:Color="#0D9488" ss:Pattern="Solid"/>',
+        '   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>',
+        '  </Style>',
+        '  <Style ss:ID="Cell">',
+        '   <Alignment ss:Vertical="Center"/>',
+        '  </Style>',
+        ' </Styles>',
+        ' <Worksheet ss:Name="Batch Results">',
+        '  <Table>'
+    ];
+
+    xmlParts.push('   <Row ss:Height="26">');
+    for (const h of headers) {
+        xmlParts.push(`    <Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`);
+    }
+    xmlParts.push('   </Row>');
+
+    for (const r of dataRows) {
+        xmlParts.push('   <Row ss:Height="20">');
+        for (const val of r) {
+            xmlParts.push(`    <Cell ss:StyleID="Cell"><Data ss:Type="String">${escapeXml(val)}</Data></Cell>`);
+        }
+        xmlParts.push('   </Row>');
+    }
+
+    xmlParts.push('  </Table>');
+    xmlParts.push(' </Worksheet>');
+    xmlParts.push('</Workbook>');
+
+    const xmlContent = xmlParts.join('\r\n');
+    const blob = new Blob([xmlContent], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const cleanFilename = filename.toLowerCase().endsWith('.xls') ? filename : `${filename}.xls`;
+    downloadBlob(blob, cleanFilename);
+}
+
+export function exportBatchToJSON(rows: DocRow[], filename = "batch_export.json") {
+    const clean = rows.map(r => {
+        const fields: Record<string, any> = {};
+        for (const [k, v] of Object.entries(r.data || {})) {
+            if (isLocatedValue(v)) fields[k] = (v as any).value;
+            else fields[k] = v;
+        }
+        return {
+            fileName: r.fileName,
+            fileId: r.fileId,
+            status: r.status,
+            data: fields,
+        };
+    });
+
+    const blob = new Blob([JSON.stringify(clean, null, 2)], { type: 'application/json;charset=utf-8;' });
     const cleanFilename = filename.toLowerCase().endsWith('.json') ? filename : `${filename}.json`;
     downloadBlob(blob, cleanFilename);
 }
