@@ -35,6 +35,24 @@ const ARCHITECT_PROMPT = `Ты — Senior Data Architect и эксперт по 
 
 Твоя задача: проанализировать текстовый запрос пользователя и создать строгую, лаконичную и релевантную структуру данных (JSON Schema) для извлечения информации.
 
+КРИТИЧЕСКОЕ ПРАВИЛО КОРНЯ СХЕМЫ (ROOT OBJECT):
+Корень схемы (root schema) ВСЕГДА ОБЯЗАН иметь "type": "object" со свойством "properties".
+КОРЕНЬ НИКОГДА НЕ ДОЛЖЕН БЫТЬ "type": "array".
+Если пользователь запрашивает список, таблицу, позиции, чеки, транзакции или массив записей, этот массив ДОЛЖЕН быть свойством корневого объекта (например, "items", "transactions", "records" и т.д.):
+{
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": { ... }
+      }
+    }
+  },
+  "required": ["items"]
+}
+
 КРИТИЧЕСКОЕ ПРАВИЛО ФОРМАТА ПОЛЕЙ:
 Каждое конечное (leaf) поле, в которое будет записано извлечённое значение, ОБЯЗАНО быть объектом со следующей структурой:
 {
@@ -70,11 +88,22 @@ const ARCHITECT_PROMPT = `Ты — Senior Data Architect и эксперт по 
  * Removes forbidden keywords ($schema, additionalProperties, pattern, etc.)
  * and ensures required properties exist.
  */
-function sanitizeForGeminiSchema(schema: any): any {
+function sanitizeForGeminiSchema(schema: any, isRoot = true): any {
     if (!schema || typeof schema !== 'object') return schema;
 
+    // Guard: if root schema is an array, wrap it into an object with "items" property
+    if (isRoot && (schema.type === 'array' || (!schema.properties && schema.items))) {
+        schema = {
+            type: 'object',
+            properties: {
+                items: schema
+            },
+            required: ['items']
+        };
+    }
+
     if (Array.isArray(schema)) {
-        return schema.map(sanitizeForGeminiSchema);
+        return schema.map(s => sanitizeForGeminiSchema(s, false));
     }
 
     const clean: Record<string, any> = {};
@@ -108,7 +137,7 @@ function sanitizeForGeminiSchema(schema: any): any {
         const validPropKeys = new Set<string>();
         for (const [propKey, propVal] of Object.entries(schema.properties)) {
             if (propVal && typeof propVal === 'object') {
-                clean.properties[propKey] = sanitizeForGeminiSchema(propVal);
+                clean.properties[propKey] = sanitizeForGeminiSchema(propVal, false);
                 validPropKeys.add(propKey);
             }
         }
@@ -126,7 +155,7 @@ function sanitizeForGeminiSchema(schema: any): any {
 
     // 5. Items for arrays
     if (schema.items && typeof schema.items === 'object') {
-        clean.items = sanitizeForGeminiSchema(schema.items);
+        clean.items = sanitizeForGeminiSchema(schema.items, false);
     }
 
     return clean;
@@ -270,6 +299,15 @@ export async function POST(req: NextRequest) {
 
             try {
                 generatedSchema = JSON.parse(schemaText);
+                if (generatedSchema && typeof generatedSchema === 'object' && (generatedSchema.type === 'array' || (!generatedSchema.properties && generatedSchema.items))) {
+                    generatedSchema = {
+                        type: 'object',
+                        properties: {
+                            items: generatedSchema
+                        },
+                        required: ['items']
+                    };
+                }
             } catch (e) {
                 console.error("Architect generated invalid JSON:", schemaText);
                 throw new Error("Architect failed to generate a valid JSON schema.");
@@ -339,6 +377,14 @@ export async function POST(req: NextRequest) {
         let extractionResult;
         try {
             extractionResult = JSON.parse(extractionText);
+            if (Array.isArray(extractionResult)) {
+                extractionResult = { items: extractionResult };
+            } else if (extractionResult && typeof extractionResult === 'object') {
+                const keys = Object.keys(extractionResult);
+                if (keys.length > 0 && keys.every(k => !isNaN(Number(k)))) {
+                    extractionResult = { items: Object.values(extractionResult) };
+                }
+            }
         } catch (e) {
             console.error("Extractor generated invalid JSON:", extractionText);
             throw new Error("Extractor failed to generate valid JSON data.");

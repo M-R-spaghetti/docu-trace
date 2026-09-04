@@ -23,6 +23,24 @@ const ARCHITECT_PROMPT = `Ты — Senior Data Architect и эксперт по 
 
 Твоя задача: проанализировать текстовый запрос пользователя и создать строгую, лаконичную и релевантную структуру данных (JSON Schema) для извлечения информации.
 
+КРИТИЧЕСКОЕ ПРАВИЛО КОРНЯ СХЕМЫ (ROOT OBJECT):
+Корень схемы (root schema) ВСЕГДА ОБЯЗАН иметь "type": "object" со свойством "properties".
+КОРЕНЬ НИКОГДА НЕ ДОЛЖЕН БЫТЬ "type": "array".
+Если пользователь запрашивает список, таблицу, позиции, чеки, транзакции или массив записей, этот массив ДОЛЖЕН быть свойством корневого объекта (например, "items", "transactions", "records" и т.д.):
+{
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": { ... }
+      }
+    }
+  },
+  "required": ["items"]
+}
+
 КРИТИЧЕСКОЕ ПРАВИЛО ФОРМАТА ПОЛЕЙ:
 Каждое конечное (leaf) поле, в которое будет записано извлечённое значение, ОБЯЗАНО быть объектом со следующей структурой:
 {
@@ -138,7 +156,16 @@ export async function POST(req: NextRequest) {
         let schemaText = schemaResponse.text || "{}";
         schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
 
-        const schema = JSON.parse(schemaText);
+        let schema = JSON.parse(schemaText);
+        if (schema && typeof schema === 'object' && (schema.type === 'array' || (!schema.properties && schema.items))) {
+            schema = {
+                type: 'object',
+                properties: {
+                    items: schema
+                },
+                required: ['items']
+            };
+        }
         return NextResponse.json({ schema }, { status: 200 });
     } catch (error: any) {
         console.error("Schema Generation Error:", error);

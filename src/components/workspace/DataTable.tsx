@@ -113,10 +113,18 @@ export function DataTable({
 }: DataTableProps) {
     const data = useMemo(() => {
         if (!extracted) return {};
-        if (extracted.data !== undefined && typeof extracted.data === 'object' && extracted.data !== null) {
-            return extracted.data;
+        let raw = extracted.data !== undefined && extracted.data !== null ? extracted.data : extracted;
+        if (Array.isArray(raw)) {
+            return { items: raw };
         }
-        return extracted;
+        if (typeof raw === 'object' && raw !== null) {
+            const keys = Object.keys(raw);
+            if (keys.length > 0 && keys.every(k => !isNaN(Number(k)))) {
+                return { items: Object.values(raw) };
+            }
+            return raw;
+        }
+        return {};
     }, [extracted]);
     const schema = useMemo(() => {
         return extracted?.schema || {};
@@ -782,7 +790,7 @@ export function DataTable({
                     {primitives.length > 0 && (
                         <div className="space-y-1">
                             <h4 className="text-xs uppercase text-muted-foreground font-bold tracking-wider mb-2 px-2">
-                                Header Information
+                                Document Fields
                             </h4>
                             <div className="border rounded-lg bg-card">
                                 {primitives.map(k => renderFieldRow(k))}
@@ -791,6 +799,18 @@ export function DataTable({
                     )}
 
                     {arrays.map(k => renderArrayField(k))}
+
+                    {primitives.length === 0 && arrays.length === 0 && !data.markdown_text && (
+                        <div className="flex flex-col items-center justify-center py-20 px-4 text-center space-y-3">
+                            <div className="w-9 h-9 rounded-full border-2 border-primary/20 border-t-primary animate-spin" />
+                            <div className="space-y-1">
+                                <p className="text-sm font-medium text-foreground">Waiting for extracted data...</p>
+                                <p className="text-xs text-muted-foreground max-w-[280px]">
+                                    Processed chunks will stream and populate fields in real-time.
+                                </p>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 

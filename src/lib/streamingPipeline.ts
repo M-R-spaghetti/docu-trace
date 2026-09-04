@@ -32,7 +32,7 @@ export interface RunStreamingPipelineOptions {
  */
 export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): Promise<any> {
     const isImageBatch = Boolean(opts.batchFiles && opts.batchFiles.length > 0);
-    const chunkSize = opts.chunkSize ?? 5;
+    const chunkSize = opts.chunkSize ?? (isImageBatch ? 15 : 10);
 
     let totalPages = 0;
     let totalChunks = 0;
@@ -47,14 +47,10 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
     if (isImageBatch) {
         totalPages = opts.batchFiles!.length;
         let cur = 0;
-        let isFirst = true;
         while (cur < totalPages) {
-            // First chunk is strictly 1 file so workspace opens in ~1.5s!
-            const thisSize = (isFirst && totalPages > 1) ? 1 : chunkSize;
-            const next = Math.min(cur + thisSize, totalPages);
+            const next = Math.min(cur + chunkSize, totalPages);
             batchPlans.push({ startIdx: cur, endIdx: next });
             cur = next;
-            isFirst = false;
         }
         totalChunks = batchPlans.length;
     } else if (opts.file) {

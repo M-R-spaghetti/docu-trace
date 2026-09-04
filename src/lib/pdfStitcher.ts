@@ -85,19 +85,15 @@ export async function stitchImagesToPdf(
  */
 export async function slicePdfChunks(
     pdfBytes: ArrayBuffer,
-    chunkSize = 5
+    chunkSize = 10
 ): Promise<PdfChunk[]> {
     const srcDoc = await PDFDocument.load(pdfBytes);
     const totalPages = srcDoc.getPageCount();
     const chunks: PdfChunk[] = [];
 
     let currentStart = 0;
-    let isFirstChunk = true;
-
     while (currentStart < totalPages) {
-        // Fast-start: First chunk is strictly 1 page so results appear immediately in ~1.5s!
-        const effectiveChunkSize = (isFirstChunk && totalPages > 1) ? 1 : chunkSize;
-        const count = Math.min(effectiveChunkSize, totalPages - currentStart);
+        const count = Math.min(chunkSize, totalPages - currentStart);
         const pageIndices = Array.from({ length: count }, (_, i) => currentStart + i);
 
         const subDoc = await PDFDocument.create();
@@ -123,7 +119,6 @@ export async function slicePdfChunks(
         });
 
         currentStart += count;
-        isFirstChunk = false;
     }
 
     return chunks;
@@ -164,9 +159,24 @@ export function remapExtractedChunkPages(data: any, pageOffset: number): any {
  * Merges a newly arrived chunk of extracted data into the existing master dataset.
  * Appends array items and maintains document structure.
  */
-export function mergeExtractedData(baseData: any, newChunkData: any): any {
-    if (!baseData) return newChunkData;
-    if (!newChunkData) return baseData;
+function normalizeData(d: any): any {
+    if (!d) return d;
+    if (Array.isArray(d)) return { items: d };
+    if (typeof d === 'object') {
+        const keys = Object.keys(d);
+        if (keys.length > 0 && keys.every(k => !isNaN(Number(k)))) {
+            return { items: Object.values(d) };
+        }
+    }
+    return d;
+}
+
+export function mergeExtractedData(rawBase: any, rawNew: any): any {
+    if (!rawBase) return rawNew;
+    if (!rawNew) return rawBase;
+
+    const baseData = normalizeData(rawBase);
+    const newChunkData = normalizeData(rawNew);
 
     const merged = { ...baseData };
 

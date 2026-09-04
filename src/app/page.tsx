@@ -137,7 +137,7 @@ export default function Home() {
           batchFiles: batchFileObjects,
           prompt: prompt.trim() || undefined,
           format,
-          chunkSize: 5,
+          chunkSize: 15,
           onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
             finalAggregated = aggregatedData;
             setExtractedData({ ...aggregatedData });
@@ -197,7 +197,7 @@ export default function Home() {
           file,
           prompt: prompt.trim() || undefined,
           format,
-          chunkSize: 5,
+          chunkSize: 10,
           onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
             finalAggregated = aggregatedData;
             setExtractedData({ ...aggregatedData });
