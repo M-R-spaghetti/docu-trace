@@ -3,13 +3,11 @@
 import React from "react";
 import { useSessionContext } from "@/lib/sessionContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Button } from "@/components/ui/button";
 import { 
     FileText, 
     Layers, 
     X, 
     Loader2, 
-    Plus, 
     FileSearch, 
     CheckCircle2, 
     Sparkles 
@@ -45,21 +43,6 @@ export function AppHeader() {
                             DocuTrace AI
                         </span>
                     </button>
-
-                    <Button
-                        variant={activeSessionId === null ? "default" : "outline"}
-                        size="sm"
-                        onClick={createSession}
-                        className={`h-8 text-xs gap-1.5 font-medium transition-all ${
-                            activeSessionId === null 
-                                ? "shadow-xs bg-primary text-primary-foreground font-semibold" 
-                                : "hover:bg-muted"
-                        }`}
-                        title="Открыть окно загрузки нового документа"
-                    >
-                        <Plus className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Новый документ</span>
-                    </Button>
                 </div>
 
                 {/* Session Tabs Navigation */}
