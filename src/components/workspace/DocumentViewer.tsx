@@ -7,7 +7,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { getPageTextItems, snapToPdfText } from "@/lib/pdfTextSnapper";
 import { computeBoxView } from "@/lib/zoomToBox";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, RotateCcw, AlertTriangle, Upload } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, RotateCcw, AlertTriangle, Upload, Eye, EyeOff } from "lucide-react";
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
@@ -36,11 +36,17 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     const [snappedBox, setSnappedBox] = useState<BoundingBox | null>(null);
     const [isSnapped, setIsSnapped] = useState(false);
     const [imageError, setImageError] = useState(false);
+    const [showBadge, setShowBadge] = useState(true);
 
     // Natural & base dimensions
     const [baseDims, setBaseDims] = useState<{ width: number; height: number }>({ width: 700, height: 950 });
 
     const imageRef = useRef<HTMLImageElement | null>(null);
+
+    // Strip verbose file prefixes from highlight labels (e.g. "002.JPG - DATE" -> "DATE")
+    const cleanHighlightLabel = (label: string): string => {
+        return label.replace(/^.*?(\.jpe?g|\.png|\.webp|\.gif|\.pdf)?\s*[-–—→:]\s*/i, '').trim() || label;
+    };
 
     // Active file to display
     const activeFile = isBatchMode && batchFiles && batchFiles.length > 0
@@ -165,6 +171,8 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 } else if (isPdf && numPages) {
                     setCurrentPdfPage(p => Math.min(numPages, p + 1));
                 }
+            } else if (e.key.toLowerCase() === "h" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                setShowBadge(v => !v);
             }
         };
 
@@ -310,7 +318,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.98 }}
                     transition={{ type: "spring", stiffness: 450, damping: 30 }}
-                    className="absolute pointer-events-none z-30"
+                    className="absolute pointer-events-auto z-30 group/highlight-box"
                     style={{
                         left: `${pixelLeft}px`,
                         top: `${pixelTop}px`,
@@ -319,25 +327,29 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     }}
                 >
                     {/* Glowing highlight box */}
-                    <div className="absolute inset-0 rounded-md border-2 border-amber-400/90 bg-amber-300/30 dark:bg-yellow-400/25 shadow-[0_0_18px_rgba(251,191,36,0.45),0_0_4px_rgba(251,191,36,0.6)_inset] backdrop-blur-[0.5px]" />
+                    <div className="absolute inset-0 rounded-md border-2 border-amber-400/90 bg-amber-300/20 dark:bg-yellow-400/15 shadow-[0_0_18px_rgba(251,191,36,0.45),0_0_4px_rgba(251,191,36,0.6)_inset] backdrop-blur-[0.5px]" />
                     <div className="absolute -top-1 -left-1 w-2.5 h-2.5 border-t-2 border-l-2 border-amber-500 rounded-tl-sm" />
                     <div className="absolute -top-1 -right-1 w-2.5 h-2.5 border-t-2 border-r-2 border-amber-500 rounded-tr-sm" />
                     <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 border-b-2 border-l-2 border-amber-500 rounded-bl-sm" />
                     <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 border-b-2 border-r-2 border-amber-500 rounded-br-sm" />
 
-                    {/* Detailed Label & Value Badge */}
-                    {activeHighlight.label && (
+                    {/* Detailed Label & Value Badge: Semi-transparent Glass, dissolves to 10% on hover so underlying text is fully visible! */}
+                    {showBadge && activeHighlight.label && (
                         <motion.div
                             initial={{ opacity: 0, y: isNearTop ? -6 : 6 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.08 }}
-                            className={`absolute left-0 bg-amber-400 text-amber-950 text-[11px] font-bold tracking-tight px-2.5 py-1 rounded-md shadow-lg whitespace-nowrap flex items-center gap-1.5 border border-amber-500/40 pointer-events-auto z-40 ${
+                            className={`absolute left-0 bg-amber-500/85 group-hover/highlight-box:opacity-10 hover:!opacity-10 dark:bg-amber-600/85 text-white backdrop-blur-md text-[11px] font-bold tracking-tight px-2.5 py-1 rounded-md shadow-lg whitespace-nowrap flex items-center gap-1.5 border border-white/20 transition-opacity duration-200 pointer-events-auto z-40 cursor-pointer select-none ${
                                 isNearTop ? 'top-full mt-1.5' : '-top-8'
                             }`}
+                            title="Наведите курсор, чтобы сделать плашку прозрачной (или нажмите клавишу H для скрытия)"
+                            onClick={() => setShowBadge(false)}
                         >
-                            <span className="uppercase text-[10px] tracking-wider opacity-90">{activeHighlight.label}</span>
+                            <span className="uppercase text-[10px] tracking-wider opacity-95">
+                                {cleanHighlightLabel(activeHighlight.label)}
+                            </span>
                             {activeHighlight.rawValue && (
-                                <span className="font-mono font-extrabold bg-amber-950/15 text-amber-950 px-1.5 py-0.5 rounded text-[11px] border border-amber-950/10">
+                                <span className="font-mono font-bold bg-black/25 text-white px-1.5 py-0.5 rounded text-[10.5px]">
                                     : {activeHighlight.rawValue}
                                 </span>
                             )}
@@ -459,8 +471,21 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     );
                 })()}
 
-                {/* Floating Zoom Control Pill */}
+                {/* Floating Zoom & Annotation Control Pill */}
                 <div className="absolute top-3 right-3 z-40 flex items-center gap-1 bg-background/90 backdrop-blur-md border px-2 py-1 rounded-full shadow-md text-xs w-fit">
+                    <button
+                        type="button"
+                        onClick={() => setShowBadge(v => !v)}
+                        className={`p-1 rounded-full transition-colors ${
+                            showBadge
+                                ? 'text-amber-500 hover:bg-amber-500/15'
+                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        }`}
+                        title={showBadge ? "Скрыть плашки меток [H] (оставить только рамку)" : "Показать плашки меток [H]"}
+                    >
+                        {showBadge ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+                    </button>
+                    <div className="h-3 w-px bg-border/60 mx-0.5" />
                     <button
                         type="button"
                         onClick={() => setZoomScale(s => Math.max(0.6, Number((s - 0.25).toFixed(2))))}
