@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
 import { DocRow } from "@/lib/batchTypes";
+import { setByPath } from "@/lib/flatten";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
 import { BatchDataTable } from "./BatchDataTable";
@@ -30,6 +31,7 @@ interface WorkspaceLayoutProps {
     batchFileObjects?: File[];
     batchRows?: DocRow[];
     onBatchRowsChange?: (rows: DocRow[]) => void;
+    onRetryFailed?: () => void;
     schema?: any;
     isProcessingBatch?: boolean;
 }
@@ -46,6 +48,7 @@ export function WorkspaceLayout({
     batchFileObjects,
     batchRows,
     onBatchRowsChange,
+    onRetryFailed,
     schema,
     isProcessingBatch,
 }: WorkspaceLayoutProps) {
@@ -315,39 +318,38 @@ export function WorkspaceLayout({
                                     if (row.file) setSelectedBatchFile(row.file);
                                     setActiveHighlight(hl);
                                 }}
-                                onUpdateCell={(rowId, colKey, newVal) => {
+                                onUpdateCell={(rowId, path, newVal) => {
                                     if (!onBatchRowsChange) return;
                                     const updated = batchRows.map(r => {
                                         if (r.fileId === rowId) {
-                                            const existingCell = r.data?.[colKey];
-                                            const updatedCell = existingCell && typeof existingCell === 'object'
-                                                ? { ...existingCell, value: newVal, originalValue: existingCell.originalValue ?? existingCell.value }
-                                                : { value: newVal, box_2d: [0, 0, 0, 0], page: 1 };
+                                            const updatedData = JSON.parse(JSON.stringify(r.data || {}));
+                                            setByPath(updatedData, path, newVal);
                                             return {
                                                 ...r,
-                                                data: { ...r.data, [colKey]: updatedCell },
-                                                verified: { ...r.verified, [colKey]: 'edited' as const },
+                                                data: updatedData,
+                                                verified: { ...r.verified, [path]: 'edited' as const },
                                             };
                                         }
                                         return r;
                                     });
                                     onBatchRowsChange(updated);
                                 }}
-                                onToggleVerifyCell={(rowId, colKey) => {
+                                onToggleVerifyCell={(rowId, path) => {
                                     if (!onBatchRowsChange) return;
                                     const updated = batchRows.map(r => {
                                         if (r.fileId === rowId) {
-                                            const currentStatus = r.verified?.[colKey] || 'pending';
+                                            const currentStatus = r.verified?.[path] || 'pending';
                                             const nextStatus = currentStatus === 'verified' ? ('pending' as const) : ('verified' as const);
                                             return {
                                                 ...r,
-                                                verified: { ...r.verified, [colKey]: nextStatus },
+                                                verified: { ...r.verified, [path]: nextStatus },
                                             };
                                         }
                                         return r;
                                     });
                                     onBatchRowsChange(updated);
                                 }}
+                                onRetryFailed={onRetryFailed}
                                 schema={schema}
                                 isProcessing={isProcessingBatch}
                             />

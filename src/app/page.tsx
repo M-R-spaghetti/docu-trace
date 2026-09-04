@@ -15,7 +15,7 @@ import { FileSearch, Trash2, Layers } from "lucide-react";
 
 import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory, clearAllHistory } from "@/lib/db";
 import { VerificationStateMap } from "@/lib/types";
-import { runReceiptBatch } from "@/lib/runReceiptBatch";
+import { runReceiptBatch, retryFailedBatchFiles } from "@/lib/runReceiptBatch";
 import { DocRow } from "@/lib/batchTypes";
 
 export default function Home() {
@@ -379,6 +379,42 @@ export default function Home() {
     }
   };
 
+  const handleRetryFailedBatch = async () => {
+    if (!batchRows || !batchSchema || isProcessingBatch) return;
+    setIsProcessingBatch(true);
+    batchAbortControllerRef.current = new AbortController();
+
+    try {
+      await retryFailedBatchFiles(batchRows, batchSchema, {
+        prompt: prompt.trim() || undefined,
+        format: "table",
+        sessionId: currentSessionId || `batch_${Date.now()}`,
+        concurrency: 4,
+        rpm: 12,
+        onRow: (row) => {
+          setBatchRows(prev => {
+            const idx = prev.findIndex(r => r.fileName === row.fileName || r.fileId === row.fileId);
+            if (idx !== -1) {
+              const updated = [...prev];
+              updated[idx] = row;
+              return updated;
+            }
+            return [...prev, row];
+          });
+        },
+        onProgress: (done, total) => {
+          setBatchCompletedCount(done);
+          setBatchTotalCount(total);
+        },
+        signal: batchAbortControllerRef.current.signal,
+      });
+    } catch (err: any) {
+      console.error("Retry failed batch error:", err);
+    } finally {
+      setIsProcessingBatch(false);
+    }
+  };
+
   const handleReset = () => {
     batchAbortControllerRef.current?.abort();
     setFile(null);
@@ -557,6 +593,7 @@ export default function Home() {
                   batchFileObjects={batchFileObjects}
                   batchRows={batchRows}
                   onBatchRowsChange={setBatchRows}
+                  onRetryFailed={handleRetryFailedBatch}
                   schema={batchSchema}
                   isProcessingBatch={isProcessingBatch}
                 />

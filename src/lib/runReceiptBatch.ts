@@ -4,6 +4,7 @@ import { withRetry, HttpError } from "./batch/retry";
 import { hashFile } from "./batch/orchestrator";
 import { saveHistory } from "./db";
 import { DocRow, RowVerificationStatus } from "./batchTypes";
+import { runAutoVerification } from "./autoVerification";
 
 export interface RunReceiptBatchOptions {
     prompt?: string;
@@ -11,27 +12,81 @@ export interface RunReceiptBatchOptions {
     sessionId?: string;
     concurrency?: number;
     rpm?: number;
+    timeoutMs?: number;
     onRow: (row: DocRow) => void;
     onProgress: (done: number, total: number) => void;
     signal?: AbortSignal;
 }
 
-export function initVerified(data: any): Record<string, RowVerificationStatus> {
-    const verified: Record<string, RowVerificationStatus> = {};
-    if (!data || typeof data !== "object") return verified;
-    for (const k of Object.keys(data)) {
-        if (k === "markdown_text") continue;
-        verified[k] = "pending";
+/**
+ * Extracts a single document with isolated timeout and retries.
+ */
+async function extractOne(
+    file: File,
+    schema: any,
+    opts: RunReceiptBatchOptions,
+    limiter: <T>(fn: () => Promise<T>) => Promise<T>
+): Promise<any> {
+    const timeoutMs = opts.timeoutMs ?? 90_000;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort("TIMEOUT"), timeoutMs);
+
+    // If parent signal aborts, abort inner controller too
+    const parentAbortHandler = () => ac.abort("USER_ABORT");
+    opts.signal?.addEventListener("abort", parentAbortHandler);
+
+    try {
+        // 1. Pre-compress to ~1500px, 0.78 quality (~60KB)
+        const prepared = await optimizeImageFile(file, 1500, 0.78, true);
+
+        // 2. Execute rate-limited with exponential backoff & 429 Retry-After
+        return await limiter(() =>
+            withRetry(async () => {
+                if (ac.signal.aborted) {
+                    if (ac.signal.reason === "TIMEOUT") throw new Error("Request timed out after 90s");
+                    throw new Error("Cancelled by user");
+                }
+
+                const fd = new FormData();
+                fd.append("file", prepared);
+                if (opts.prompt) fd.append("prompt", opts.prompt);
+                if (opts.format) fd.append("format", opts.format);
+                if (schema) fd.append("schema", JSON.stringify(schema));
+
+                const res = await fetch("/api/extract", {
+                    method: "POST",
+                    body: fd,
+                    signal: ac.signal,
+                });
+
+                if (!res.ok) {
+                    const retryHeader = res.headers.get("retry-after");
+                    const retryAfter = retryHeader ? Number(retryHeader) : undefined;
+                    let errMsg = `HTTP ${res.status}`;
+                    try {
+                        const j = await res.json();
+                        errMsg = j.error || errMsg;
+                    } catch {}
+                    throw new HttpError(res.status, errMsg, retryAfter);
+                }
+
+                const j = await res.json();
+                return j.data ?? {};
+            }, { maxAttempts: 5, initialDelayMs: 2000 })
+        );
+    } finally {
+        clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", parentAbortHandler);
     }
-    return verified;
 }
 
 /**
  * Executes high-performance per-file batch processing:
  * - 1 document = 1 extraction call with a shared pre-compiled schema
  * - Controlled concurrency (default 4) and rate limiting (default 12 RPM)
- * - Immediate image optimization to ~60KB to prevent payload bottlenecks
- * - Real-time onRow streaming to master table and IndexedDB persistence
+ * - 90s isolated timeout per file preventing stuck slots
+ * - Real-time onRow streaming and IndexedDB persistence
+ * - Client-side rule-based auto-verification
  */
 export async function runReceiptBatch(
     files: File[],
@@ -90,42 +145,15 @@ export async function runReceiptBatch(
         opts.onRow(extractingRow);
 
         try {
-            // 1. Prepare & compress image to ~1500px, 0.78 quality
-            const prepared = await optimizeImageFile(raw, 1500, 0.78, true);
-            fileId = await hashFile(prepared);
+            const resData = await extractOne(raw, schema, opts, limiter);
+            try {
+                fileId = await hashFile(raw);
+            } catch {
+                fileId = raw.name;
+            }
 
-            // 2. Extract with limiter + withRetry
-            const resData = await limiter(() =>
-                withRetry(async () => {
-                    if (opts.signal?.aborted) throw new Error("Cancelled by user.");
-
-                    const fd = new FormData();
-                    fd.append("file", prepared);
-                    if (opts.prompt) fd.append("prompt", opts.prompt);
-                    if (opts.format) fd.append("format", opts.format);
-                    if (schema) fd.append("schema", JSON.stringify(schema));
-
-                    const res = await fetch("/api/extract", {
-                        method: "POST",
-                        body: fd,
-                        signal: opts.signal,
-                    });
-
-                    if (!res.ok) {
-                        const retryHeader = res.headers.get("retry-after");
-                        const retryAfter = retryHeader ? Number(retryHeader) : undefined;
-                        let errMsg = `HTTP ${res.status}`;
-                        try {
-                            const j = await res.json();
-                            errMsg = j.error || errMsg;
-                        } catch {}
-                        throw new HttpError(res.status, errMsg, retryAfter);
-                    }
-
-                    const j = await res.json();
-                    return j.data ?? {};
-                }, { maxAttempts: 5, initialDelayMs: 2000 })
-            );
+            // Run deterministic auto-verification
+            const verifiedMap = runAutoVerification(fileId, resData);
 
             const doneRow: DocRow = {
                 fileId,
@@ -133,7 +161,7 @@ export async function runReceiptBatch(
                 file: raw,
                 data: resData,
                 status: "done",
-                verified: initVerified(resData),
+                verified: verifiedMap,
             };
             rowsMap.set(raw.name, doneRow);
 
@@ -155,23 +183,42 @@ export async function runReceiptBatch(
 
             opts.onRow(doneRow);
         } catch (e: any) {
-            const failedRow: DocRow = {
+            const errMsg = e?.message ?? String(e);
+            const isTimeout = errMsg.toLowerCase().includes("timed out") || errMsg.toLowerCase().includes("timeout");
+
+            const errRow: DocRow = {
                 fileId,
                 fileName: raw.name,
                 file: raw,
                 data: {},
-                status: "failed",
-                error: e?.message ?? String(e),
+                status: isTimeout ? "timeout" : "failed",
+                error: errMsg,
                 verified: {},
             };
-            rowsMap.set(raw.name, failedRow);
-            opts.onRow(failedRow);
+            rowsMap.set(raw.name, errRow);
+            opts.onRow(errRow);
         } finally {
             opts.onProgress(++finished, files.length);
         }
     };
 
     await Promise.all(files.map(f => processFile(f)));
-
     return Array.from(rowsMap.values());
+}
+
+/**
+ * Retries only the failed or timed-out files from an existing batch.
+ */
+export async function retryFailedBatchFiles(
+    existingRows: DocRow[],
+    schema: any,
+    opts: RunReceiptBatchOptions
+): Promise<DocRow[]> {
+    const failedRows = existingRows.filter(r => r.status === "failed" || r.status === "timeout");
+    if (failedRows.length === 0) return existingRows;
+
+    const filesToRetry = failedRows.map(r => r.file).filter(Boolean) as File[];
+    if (filesToRetry.length === 0) return existingRows;
+
+    return await runReceiptBatch(filesToRetry, schema, opts);
 }

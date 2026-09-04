@@ -5,10 +5,7 @@
 // 3. Clean JSON (.json with unwrapped values for API/database integration)
 
 import type { DocRow } from "./batchTypes";
-
-function isLocatedValue(v: any): boolean {
-    return v && typeof v === 'object' && 'value' in v && 'box_2d' in v;
-}
+import { FlatRow, explodeDoc, getDisplayValue, isLocatedValue } from "./flatten";
 
 function extractValue(v: any): string {
     if (v === null || v === undefined) return '';
@@ -137,7 +134,6 @@ export function exportToExcel(data: any, filename: string = "docutrace-export.xl
     const isNumeric = (val: string): boolean => {
         if (!val || typeof val !== 'string') return false;
         const trimmed = val.trim();
-        // Keep codes with leading zeros as text (e.g. EDRPOU, postal code, IBAN)
         if (/^0\d+/.test(trimmed)) return false;
         return !isNaN(Number(trimmed)) && !isNaN(parseFloat(trimmed));
     };
@@ -164,30 +160,33 @@ export function exportToExcel(data: any, filename: string = "docutrace-export.xl
         '   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>',
         '   <NumberFormat ss:Format="#,##0.00"/>',
         '  </Style>',
+        '  <Style ss:ID="StringCell">',
+        '   <Alignment ss:Horizontal="Left" ss:Vertical="Center"/>',
+        '  </Style>',
         ' </Styles>',
-        ' <Worksheet ss:Name="DocuTrace Export">',
-        '  <Table ss:DefaultRowHeight="20">'
+        ' <Worksheet ss:Name="Extracted Data">',
+        '  <Table>'
     ];
 
     // Header row
-    xmlParts.push('   <Row ss:StyleID="Header" ss:Height="24">');
-    headers.forEach(h => {
-        xmlParts.push(`    <Cell><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`);
-    });
+    xmlParts.push('   <Row ss:Height="26">');
+    for (const h of headers) {
+        xmlParts.push(`    <Cell ss:StyleID="Header"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`);
+    }
     xmlParts.push('   </Row>');
 
     // Data rows
-    rows.forEach(row => {
-        xmlParts.push('   <Row>');
-        row.forEach(cell => {
+    for (const row of rows) {
+        xmlParts.push('   <Row ss:Height="20">');
+        for (const cell of row) {
             if (isNumeric(cell)) {
-                xmlParts.push(`    <Cell ss:StyleID="NumberCell"><Data ss:Type="Number">${escapeXml(cell)}</Data></Cell>`);
+                xmlParts.push(`    <Cell ss:StyleID="NumberCell"><Data ss:Type="Number">${escapeXml(cell.replace(',', '.'))}</Data></Cell>`);
             } else {
-                xmlParts.push(`    <Cell><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`);
+                xmlParts.push(`    <Cell ss:StyleID="StringCell"><Data ss:Type="String">${escapeXml(cell)}</Data></Cell>`);
             }
-        });
+        }
         xmlParts.push('   </Row>');
-    });
+    }
 
     xmlParts.push('  </Table>');
     xmlParts.push(' </Worksheet>');
@@ -200,77 +199,71 @@ export function exportToExcel(data: any, filename: string = "docutrace-export.xl
 }
 
 /**
- * Export clean, unwrapped JSON (without internal box_2d/page metadata).
- * Perfect for software integrations, ERP import, or developer API payloads.
+ * Export raw or unwrapped data as clean JSON.
  */
 export function exportToJSON(data: any, filename: string = "docutrace-export.json") {
-    if (!data || typeof data !== 'object') return;
+    if (!data) return;
 
-    function unwrapValues(obj: any): any {
-        if (obj === null || obj === undefined) return null;
-        if (isLocatedValue(obj)) {
-            return obj.value;
-        }
-        if (Array.isArray(obj)) {
-            return obj.map(unwrapValues);
-        }
-        if (typeof obj === 'object') {
-            const clean: Record<string, any> = {};
-            for (const k of Object.keys(obj)) {
-                clean[k] = unwrapValues(obj[k]);
+    function unwrapNode(node: any): any {
+        if (node === null || node === undefined) return node;
+        if (isLocatedValue(node)) return node.value;
+        if (Array.isArray(node)) return node.map(unwrapNode);
+        if (typeof node === 'object') {
+            const cleanObj: Record<string, any> = {};
+            for (const [k, v] of Object.entries(node)) {
+                if (k === 'markdown_text') continue;
+                cleanObj[k] = unwrapNode(v);
             }
-            return clean;
+            return cleanObj;
         }
-        return obj;
+        return node;
     }
 
-    const cleanData = unwrapValues(data);
-    const jsonString = JSON.stringify(cleanData, null, 2);
-
-    const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8;' });
+    const cleanData = unwrapNode(data);
+    const jsonStr = JSON.stringify(cleanData, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
     const cleanFilename = filename.toLowerCase().endsWith('.json') ? filename : `${filename}.json`;
     downloadBlob(blob, cleanFilename);
 }
 
 /**
- * Compiles an array of DocRow items into a flat tabular format
- * with "Source File", "Status", and each extracted field column.
+ * Compiles a batch of documents into flat item-level 2D grid data for Excel/CSV.
  */
-export function compileBatchExportData(rows: DocRow[]): { headers: string[]; dataRows: string[][] } {
-    if (!rows || rows.length === 0) return { headers: [], dataRows: [] };
+export function compileBatchExportData(rows: DocRow[] | FlatRow[]): { headers: string[]; dataRows: string[][] } {
+    const flatRows: FlatRow[] = (rows.length > 0 && "cells" in rows[0])
+        ? (rows as FlatRow[])
+        : (rows as DocRow[]).flatMap(r => explodeDoc(r.fileId, r.fileName, r.data, r.file, r.status, r.error));
 
-    const fieldKeysSet = new Set<string>();
-    for (const r of rows) {
-        if (r.data && typeof r.data === "object") {
-            for (const k of Object.keys(r.data)) {
-                if (k === "markdown_text") continue;
-                fieldKeysSet.add(k);
-            }
+    if (flatRows.length === 0) return { headers: [], dataRows: [] };
+
+    const colKeysSet = new Set<string>();
+    for (const fr of flatRows) {
+        for (const k of Object.keys(fr.cells)) {
+            colKeysSet.add(k);
         }
     }
-    const fieldKeys = Array.from(fieldKeysSet);
+    const colKeys = Array.from(colKeysSet);
 
     const headers = [
         "Source File",
+        "Position #",
         "Status",
-        ...fieldKeys.map(k => k.replace(/_/g, " ").replace(/^./, s => s.toUpperCase()))
+        ...colKeys.map(k => k.replace(/_/g, " ").replace(/^./, s => s.toUpperCase()))
     ];
 
-    const dataRows = rows.map(r => {
-        const status = r.status;
-        const fieldVals = fieldKeys.map(k => {
-            const rawVal = r.data?.[k];
-            if (rawVal === undefined || rawVal === null) return "";
-            if (isLocatedValue(rawVal)) return String(rawVal.value ?? "");
-            return String(rawVal);
+    const dataRows = flatRows.map(fr => {
+        const posStr = fr.totalItemsInDoc > 1 ? `${fr.rowIndex + 1} of ${fr.totalItemsInDoc}` : "1";
+        const vals = colKeys.map(k => {
+            const cell = fr.cells[k];
+            return cell ? getDisplayValue(cell.node) : "";
         });
-        return [r.fileName, status, ...fieldVals];
+        return [fr.fileName, posStr, fr.status, ...vals];
     });
 
     return { headers, dataRows };
 }
 
-export function exportBatchToCSV(rows: DocRow[], filename = "batch_export.csv") {
+export function exportBatchToCSV(rows: DocRow[] | FlatRow[], filename = "batch_export.csv") {
     const { headers, dataRows } = compileBatchExportData(rows);
     if (headers.length === 0) return;
 
@@ -286,7 +279,7 @@ export function exportBatchToCSV(rows: DocRow[], filename = "batch_export.csv") 
     downloadBlob(blob, cleanFilename);
 }
 
-export function exportBatchToExcel(rows: DocRow[], filename = "batch_export.xls") {
+export function exportBatchToExcel(rows: DocRow[] | FlatRow[], filename = "batch_export.xls") {
     const { headers, dataRows } = compileBatchExportData(rows);
     if (headers.length === 0) return;
 
@@ -336,18 +329,23 @@ export function exportBatchToExcel(rows: DocRow[], filename = "batch_export.xls"
     downloadBlob(blob, cleanFilename);
 }
 
-export function exportBatchToJSON(rows: DocRow[], filename = "batch_export.json") {
-    const clean = rows.map(r => {
-        const fields: Record<string, any> = {};
-        for (const [k, v] of Object.entries(r.data || {})) {
-            if (isLocatedValue(v)) fields[k] = (v as any).value;
-            else fields[k] = v;
+export function exportBatchToJSON(rows: DocRow[] | FlatRow[], filename = "batch_export.json") {
+    const flatRows: FlatRow[] = (rows.length > 0 && "cells" in rows[0])
+        ? (rows as FlatRow[])
+        : (rows as DocRow[]).flatMap(r => explodeDoc(r.fileId, r.fileName, r.data, r.file, r.status, r.error));
+
+    const clean = flatRows.map(fr => {
+        const itemFields: Record<string, any> = {};
+        for (const [k, cell] of Object.entries(fr.cells)) {
+            itemFields[k] = isLocatedValue(cell.node) ? cell.node.value : cell.node;
         }
         return {
-            fileName: r.fileName,
-            fileId: r.fileId,
-            status: r.status,
-            data: fields,
+            fileName: fr.fileName,
+            fileId: fr.fileId,
+            position: fr.totalItemsInDoc > 1 ? fr.rowIndex + 1 : 1,
+            totalPositions: fr.totalItemsInDoc,
+            status: fr.status,
+            data: itemFields,
         };
     });
 

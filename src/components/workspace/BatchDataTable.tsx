@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect } from "react";
-import { DocRow, RowVerificationStatus } from "@/lib/batchTypes";
-import { ActiveHighlight, LocatedValue } from "@/lib/types";
+import { DocRow, RowVerificationStatus, FlatRow } from "@/lib/batchTypes";
+import { ActiveHighlight } from "@/lib/types";
+import { explodeDoc, getDisplayValue, isLocatedValue, walkLeaves, vKey } from "@/lib/flatten";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { exportBatchToCSV, exportBatchToExcel, exportBatchToJSON } from "@/lib/export";
@@ -16,10 +17,10 @@ import {
     MapPin,
     Check,
     Pencil,
-    Filter,
-    FileSpreadsheet,
     FileText,
-    Eye
+    RefreshCw,
+    ShieldCheck,
+    Clock
 } from "lucide-react";
 
 interface BatchDataTableProps {
@@ -27,20 +28,11 @@ interface BatchDataTableProps {
     selectedRowId?: string;
     onSelectRow: (row: DocRow) => void;
     onSelectCellHighlight: (row: DocRow, colKey: string, highlight: ActiveHighlight) => void;
-    onUpdateCell?: (rowId: string, colKey: string, newValue: string) => void;
-    onToggleVerifyCell?: (rowId: string, colKey: string) => void;
+    onUpdateCell?: (rowId: string, path: string, newValue: string) => void;
+    onToggleVerifyCell?: (rowId: string, path: string) => void;
+    onRetryFailed?: () => void;
     schema?: any;
     isProcessing?: boolean;
-}
-
-function isLocatedValue(v: any): v is LocatedValue<any> {
-    return v && typeof v === "object" && "value" in v && "box_2d" in v && Array.isArray(v.box_2d);
-}
-
-function getCellValue(v: any): string {
-    if (v === null || v === undefined) return "";
-    if (isLocatedValue(v)) return String(v.value ?? "");
-    return String(v);
 }
 
 function formatHeader(key: string) {
@@ -57,17 +49,17 @@ export function BatchDataTable({
     onSelectCellHighlight,
     onUpdateCell,
     onToggleVerifyCell,
+    onRetryFailed,
     schema,
     isProcessing,
 }: BatchDataTableProps) {
     const [filter, setFilter] = useState<"all" | "problematic" | "verified">("all");
     const [searchQuery, setSearchQuery] = useState("");
     const [exportFormat, setExportFormat] = useState<"csv" | "excel" | "json">("excel");
-    const [editingCell, setEditingCell] = useState<{ rowId: string; colKey: string } | null>(null);
+    const [editingCell, setEditingCell] = useState<{ rowId: string; path: string } | null>(null);
     const [editValue, setEditValue] = useState("");
     const editInputRef = useRef<HTMLInputElement>(null);
 
-    // Focus edit input
     useEffect(() => {
         if (editingCell && editInputRef.current) {
             editInputRef.current.focus();
@@ -75,137 +67,208 @@ export function BatchDataTable({
         }
     }, [editingCell]);
 
-    // Derive columns from schema properties or data keys
+    // Explode each document into item-level flat rows
+    const flatRows: FlatRow[] = useMemo(() => {
+        return rows.flatMap(r => explodeDoc(r.fileId, r.fileName, r.data, r.file, r.status, r.error));
+    }, [rows]);
+
+    // Derive columns: scalar document properties first, then item properties
     const columns = useMemo(() => {
-        const set = new Set<string>();
+        const docCols = new Set<string>();
+        const itemCols = new Set<string>();
+
         if (schema?.properties) {
-            for (const k of Object.keys(schema.properties)) {
-                if (k !== "markdown_text") set.add(k);
-            }
-        }
-        for (const r of rows) {
-            if (r.data && typeof r.data === "object") {
-                for (const k of Object.keys(r.data)) {
-                    if (k !== "markdown_text" && !Array.isArray(r.data[k])) {
-                        set.add(k);
+            for (const [k, v] of Object.entries(schema.properties)) {
+                if (k === "markdown_text") continue;
+                if (k === "items" && (v as any)?.items?.properties) {
+                    for (const ik of Object.keys((v as any).items.properties)) {
+                        itemCols.add(ik);
                     }
+                } else {
+                    docCols.add(k);
                 }
             }
         }
-        return Array.from(set);
-    }, [schema, rows]);
 
-    // Check if row has problematic fields (failed status, or any empty field)
-    const isRowProblematic = (row: DocRow): boolean => {
-        if (row.status === "failed") return true;
-        if (row.status === "extracting" || row.status === "queued") return false;
-        if (!row.data || Object.keys(row.data).length === 0) return true;
-        for (const col of columns) {
-            const val = getCellValue(row.data[col]);
-            if (!val || val.trim() === "" || val === "-") return true;
+        for (const fr of flatRows) {
+            for (const k of Object.keys(fr.cells)) {
+                if (k === "items") continue;
+                if (!docCols.has(k) && !itemCols.has(k)) {
+                    itemCols.add(k);
+                }
+            }
         }
-        return false;
-    };
 
-    const isRowFullyVerified = (row: DocRow): boolean => {
-        if (row.status !== "done") return false;
-        if (columns.length === 0) return false;
-        return columns.every(col => row.verified?.[col] === "verified" || row.verified?.[col] === "edited");
-    };
+        return [...Array.from(docCols), ...Array.from(itemCols)];
+    }, [schema, flatRows]);
 
-    // Calculate verification stats across the entire batch
+    // Real leaf verification statistics
     const stats = useMemo(() => {
-        let totalFields = 0;
-        let verifiedFields = 0;
-        let problemCount = 0;
-        let verifiedRowCount = 0;
+        let totalLeaves = 0;
+        let verifiedLeaves = 0;
+        let failedDocs = 0;
 
         for (const r of rows) {
-            if (isRowProblematic(r)) problemCount++;
-            if (isRowFullyVerified(r)) verifiedRowCount++;
-
-            if (r.status === "done") {
-                for (const col of columns) {
-                    totalFields++;
-                    const st = r.verified?.[col];
-                    if (st === "verified" || st === "edited") {
-                        verifiedFields++;
+            if (r.status === "failed" || r.status === "timeout") {
+                failedDocs++;
+            }
+            if (r.status === "done" && r.data) {
+                const leaves = walkLeaves(r.data);
+                for (const leaf of leaves) {
+                    totalLeaves++;
+                    const st = r.verified?.[leaf.path];
+                    if (st === "verified" || st === "edited" || st === "auto_verified") {
+                        verifiedLeaves++;
                     }
                 }
             }
         }
 
-        const percent = totalFields > 0 ? Math.round((verifiedFields / totalFields) * 100) : 0;
-        return {
-            totalFields,
-            verifiedFields,
-            percent,
-            problemCount,
-            verifiedRowCount,
-            totalRows: rows.length,
-            doneRows: rows.filter(r => r.status === "done").length,
-        };
-    }, [rows, columns]);
+        const percent = totalLeaves > 0 ? Math.round((verifiedLeaves / totalLeaves) * 100) : 0;
 
-    // Filter and search rows
-    const filteredRows = useMemo(() => {
-        return rows.filter(r => {
-            if (filter === "problematic" && !isRowProblematic(r)) return false;
-            if (filter === "verified" && !isRowFullyVerified(r)) return false;
+        // Check which flat rows are problematic
+        const isFlatRowProblematic = (fr: FlatRow): boolean => {
+            if (fr.status === "failed" || fr.status === "timeout") return true;
+            if (fr.status === "extracting" || fr.status === "queued") return false;
+            if (Object.keys(fr.cells).length === 0) return true;
+
+            const parentDoc = rows.find(r => r.fileId === fr.fileId || r.fileName === fr.fileName);
+            for (const col of columns) {
+                const cell = fr.cells[col];
+                if (!cell) continue;
+                const disp = getDisplayValue(cell.node);
+                if (disp === "—" || disp.trim() === "") return true;
+                const st = parentDoc?.verified?.[cell.path] || "pending";
+                if (st === "pending") return true;
+            }
+            return false;
+        };
+
+        const isFlatRowVerified = (fr: FlatRow): boolean => {
+            if (fr.status !== "done") return false;
+            if (Object.keys(fr.cells).length === 0) return false;
+            const parentDoc = rows.find(r => r.fileId === fr.fileId || r.fileName === fr.fileName);
+            for (const col of columns) {
+                const cell = fr.cells[col];
+                if (!cell) continue;
+                const st = parentDoc?.verified?.[cell.path];
+                if (st !== "verified" && st !== "edited" && st !== "auto_verified") return false;
+            }
+            return true;
+        };
+
+        const problemRowsCount = flatRows.filter(isFlatRowProblematic).length;
+        const verifiedRowsCount = flatRows.filter(isFlatRowVerified).length;
+
+        return {
+            totalLeaves,
+            verifiedLeaves,
+            percent,
+            problemRowsCount,
+            verifiedRowsCount,
+            totalItems: flatRows.length,
+            totalDocs: rows.length,
+            doneDocs: rows.filter(r => r.status === "done").length,
+            failedDocs,
+        };
+    }, [rows, flatRows, columns]);
+
+    // Filter flat rows
+    const filteredFlatRows = useMemo(() => {
+        return flatRows.filter(fr => {
+            const parentDoc = rows.find(r => r.fileId === fr.fileId || r.fileName === fr.fileName);
+
+            if (filter === "problematic") {
+                if (fr.status === "failed" || fr.status === "timeout") return true;
+                if (fr.status === "extracting" || fr.status === "queued") return false;
+                let hasIssue = false;
+                for (const col of columns) {
+                    const cell = fr.cells[col];
+                    if (!cell) continue;
+                    const disp = getDisplayValue(cell.node);
+                    if (disp === "—" || disp.trim() === "") { hasIssue = true; break; }
+                    const st = parentDoc?.verified?.[cell.path] || "pending";
+                    if (st === "pending") { hasIssue = true; break; }
+                }
+                if (!hasIssue) return false;
+            } else if (filter === "verified") {
+                if (fr.status !== "done") return false;
+                let allGood = true;
+                for (const col of columns) {
+                    const cell = fr.cells[col];
+                    if (!cell) continue;
+                    const st = parentDoc?.verified?.[cell.path];
+                    if (st !== "verified" && st !== "edited" && st !== "auto_verified") { allGood = false; break; }
+                }
+                if (!allGood) return false;
+            }
 
             if (searchQuery.trim()) {
                 const q = searchQuery.toLowerCase();
-                const matchesName = r.fileName.toLowerCase().includes(q);
-                const matchesData = Object.values(r.data || {}).some(v => getCellValue(v).toLowerCase().includes(q));
-                if (!matchesName && !matchesData) return false;
+                const matchesName = fr.fileName.toLowerCase().includes(q);
+                const matchesCells = Object.values(fr.cells).some(c => getDisplayValue(c.node).toLowerCase().includes(q));
+                if (!matchesName && !matchesCells) return false;
             }
+
             return true;
         });
-    }, [rows, filter, searchQuery, columns]);
+    }, [flatRows, filter, searchQuery, rows, columns]);
 
-    const handleSaveEdit = (rowId: string, colKey: string) => {
+    const handleSaveEdit = (rowId: string, path: string) => {
         if (onUpdateCell) {
-            onUpdateCell(rowId, colKey, editValue);
+            onUpdateCell(rowId, path, editValue);
         }
         setEditingCell(null);
     };
 
     const handleExport = () => {
-        const baseName = `batch_export_${new Date().toISOString().slice(0, 10)}`;
-        if (exportFormat === "excel") {
-            exportBatchToExcel(rows, `${baseName}.xls`);
-        } else if (exportFormat === "json") {
-            exportBatchToJSON(rows, `${baseName}.json`);
+        if (exportFormat === "csv") {
+            exportBatchToCSV(flatRows);
+        } else if (exportFormat === "excel") {
+            exportBatchToExcel(flatRows);
         } else {
-            exportBatchToCSV(rows, `${baseName}.csv`);
+            exportBatchToJSON(flatRows);
         }
     };
 
     return (
-        <div className="flex flex-col h-full w-full bg-card overflow-hidden border-l">
-            {/* Top Toolbar */}
-            <div className="p-4 border-b bg-muted/20 flex flex-col gap-3 flex-none">
-                <div className="flex items-center justify-between gap-3">
+        <div className="w-full h-full flex flex-col bg-card border rounded-xl overflow-hidden shadow-sm">
+            {/* Header & Export Controls */}
+            <div className="p-4 border-b bg-muted/20 space-y-3 shrink-0">
+                <div className="flex items-center justify-between gap-4">
                     <div>
                         <div className="flex items-center gap-2">
-                            <h2 className="text-base font-bold tracking-tight text-foreground flex items-center gap-2">
-                                <FileSpreadsheet className="w-4 h-4 text-primary" />
-                                Таблица пакета ({rows.length} чеков)
-                            </h2>
+                            <h3 className="font-bold text-base tracking-tight text-foreground">
+                                Пакетная таблица позиций
+                            </h3>
+                            <Badge variant="secondary" className="font-mono text-xs">
+                                {flatRows.length} позиций ({rows.length} чеков)
+                            </Badge>
                             {isProcessing && (
-                                <Badge variant="secondary" className="gap-1 text-xs py-0.5 animate-pulse bg-primary/10 text-primary">
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                    Обработка...
+                                <Badge variant="outline" className="gap-1 text-primary animate-pulse text-xs">
+                                    <Loader2 className="w-3 h-3 animate-spin" /> Обработка
                                 </Badge>
                             )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                            Кликните на ячейку, чтобы открыть скан чека и подсветить координаты поля.
+                            Каждая строка — отдельная позиция чека. Кликните по ячейке для подсветки координат.
                         </p>
                     </div>
 
-                    {/* Export Controls */}
+                    {/* Actions & Export */}
                     <div className="flex items-center gap-2">
+                        {stats.failedDocs > 0 && onRetryFailed && (
+                            <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={onRetryFailed}
+                                className="h-8 gap-1.5 text-xs font-semibold shadow-xs animate-in fade-in"
+                            >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                Повторить неудачные ({stats.failedDocs})
+                            </Button>
+                        )}
+
                         <div className="flex bg-muted/70 p-0.5 rounded-lg text-xs border">
                             <button
                                 onClick={() => setExportFormat("excel")}
@@ -232,22 +295,22 @@ export function BatchDataTable({
                             className="h-8 gap-1.5 text-xs font-semibold shadow-xs"
                         >
                             <Download className="w-3.5 h-3.5" />
-                            Экспорт всех ({rows.length})
+                            Экспорт ({flatRows.length})
                         </Button>
                     </div>
                 </div>
 
-                {/* Batch Verification Progress Bar */}
+                {/* Verification Progress Bar */}
                 <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
                         <span className="text-muted-foreground font-medium">
-                            Проверка данных по пакету:{" "}
+                            Проверка данных:{" "}
                             <span className="text-foreground font-bold font-mono">
-                                {stats.verifiedFields} / {stats.totalFields} полей ({stats.percent}%)
+                                {stats.verifiedLeaves} / {stats.totalLeaves} полей ({stats.percent}%)
                             </span>
                         </span>
                         <span className="text-muted-foreground text-[11px]">
-                            {stats.doneRows} из {stats.totalRows} чеков извлечено
+                            {stats.doneDocs} из {stats.totalDocs} чеков готово
                         </span>
                     </div>
                     <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -269,16 +332,16 @@ export function BatchDataTable({
                             className="h-7 text-xs px-2.5"
                             onClick={() => setFilter("all")}
                         >
-                            Все ({rows.length})
+                            Все ({flatRows.length})
                         </Button>
                         <Button
                             variant={filter === "problematic" ? "default" : "ghost"}
                             size="sm"
-                            className={`h-7 text-xs px-2.5 gap-1.5 ${filter === "problematic" ? "" : stats.problemCount > 0 ? "text-amber-600 hover:text-amber-700 bg-amber-500/10" : ""}`}
+                            className={`h-7 text-xs px-2.5 gap-1.5 ${filter === "problematic" ? "" : stats.problemRowsCount > 0 ? "text-amber-600 hover:text-amber-700 bg-amber-500/10" : ""}`}
                             onClick={() => setFilter("problematic")}
                         >
                             <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-                            Требуют внимания ({stats.problemCount})
+                            Требуют внимания ({stats.problemRowsCount})
                         </Button>
                         <Button
                             variant={filter === "verified" ? "default" : "ghost"}
@@ -287,7 +350,7 @@ export function BatchDataTable({
                             onClick={() => setFilter("verified")}
                         >
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                            Проверены ({stats.verifiedRowCount})
+                            Проверены ({stats.verifiedRowsCount})
                         </Button>
                     </div>
 
@@ -311,7 +374,7 @@ export function BatchDataTable({
                         <tr>
                             <th className="py-2.5 px-3 w-12 text-center">#</th>
                             <th className="py-2.5 px-3 w-28">Статус</th>
-                            <th className="py-2.5 px-3 min-w-[140px]">Файл</th>
+                            <th className="py-2.5 px-3 min-w-[150px]">Файл</th>
                             {columns.map(col => (
                                 <th key={col} className="py-2.5 px-3 min-w-[120px]">
                                     {formatHeader(col)}
@@ -320,32 +383,34 @@ export function BatchDataTable({
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60 font-mono">
-                        {filteredRows.length === 0 ? (
+                        {filteredFlatRows.length === 0 ? (
                             <tr>
                                 <td colSpan={columns.length + 3} className="py-12 text-center text-muted-foreground font-sans">
                                     {filter === "problematic" ? (
                                         <div className="flex flex-col items-center gap-1">
                                             <CheckCircle2 className="w-8 h-8 text-emerald-500 mb-1" />
-                                            <p className="font-semibold text-foreground">Проблемных чеков не найдено!</p>
-                                            <p className="text-xs text-muted-foreground">Все обязательные поля извлечены корректно.</p>
+                                            <p className="font-semibold text-foreground">Все строки корректны и проверены!</p>
+                                            <p className="text-xs text-muted-foreground">Расхождений или пустых полей не обнаружено.</p>
                                         </div>
                                     ) : (
-                                        "Нет документов, соответствующих фильтру."
+                                        "Нет позиций, соответствующих фильтру."
                                     )}
                                 </td>
                             </tr>
                         ) : (
-                            filteredRows.map((row, idx) => {
-                                const isSelected = row.fileId === selectedRowId || row.fileName === selectedRowId;
-                                const isProblematic = isRowProblematic(row);
+                            filteredFlatRows.map((fr, idx) => {
+                                const parentDoc = rows.find(r => r.fileId === fr.fileId || r.fileName === fr.fileName);
+                                const isSelected = fr.fileId === selectedRowId || fr.fileName === selectedRowId;
 
                                 return (
                                     <tr
-                                        key={row.fileId || row.fileName}
-                                        onClick={() => onSelectRow(row)}
+                                        key={`${fr.fileId}-${fr.rowIndex}`}
+                                        onClick={() => {
+                                            if (parentDoc) onSelectRow(parentDoc);
+                                        }}
                                         className={`transition-colors cursor-pointer group hover:bg-muted/50 ${
                                             isSelected ? "bg-primary/10 ring-1 ring-primary/40 font-medium" : ""
-                                        } ${isProblematic ? "bg-amber-500/5" : ""}`}
+                                        }`}
                                     >
                                         {/* # */}
                                         <td className="py-2 px-3 text-center text-muted-foreground text-[11px]">
@@ -354,46 +419,58 @@ export function BatchDataTable({
 
                                         {/* Status */}
                                         <td className="py-2 px-3 font-sans">
-                                            {row.status === "done" && (
+                                            {fr.status === "done" && (
                                                 <Badge variant="outline" className="text-[10px] py-0 gap-1 text-emerald-600 bg-emerald-500/10 border-emerald-500/20">
                                                     <Check className="w-3 h-3" /> Готов
                                                 </Badge>
                                             )}
-                                            {row.status === "extracting" && (
+                                            {fr.status === "extracting" && (
                                                 <Badge variant="outline" className="text-[10px] py-0 gap-1 text-primary bg-primary/10 border-primary/20 animate-pulse">
                                                     <Loader2 className="w-3 h-3 animate-spin" /> Сканирование
                                                 </Badge>
                                             )}
-                                            {row.status === "queued" && (
+                                            {fr.status === "queued" && (
                                                 <Badge variant="outline" className="text-[10px] py-0 text-muted-foreground bg-muted">
                                                     В очереди
                                                 </Badge>
                                             )}
-                                            {row.status === "failed" && (
-                                                <Badge variant="destructive" className="text-[10px] py-0 gap-1" title={row.error}>
+                                            {fr.status === "timeout" && (
+                                                <Badge variant="destructive" className="text-[10px] py-0 gap-1 bg-amber-500/15 text-amber-700 border-amber-500/30" title={fr.error || "Превышен таймаут (90с)"}>
+                                                    <Clock className="w-3 h-3 text-amber-600" /> Таймаут
+                                                </Badge>
+                                            )}
+                                            {fr.status === "failed" && (
+                                                <Badge variant="destructive" className="text-[10px] py-0 gap-1" title={fr.error}>
                                                     <AlertCircle className="w-3 h-3" /> Ошибка
                                                 </Badge>
                                             )}
                                         </td>
 
-                                        {/* File Name */}
+                                        {/* File Name + Item Indicator */}
                                         <td className="py-2 px-3 font-sans">
-                                            <div className="flex items-center gap-1.5 max-w-[180px] truncate" title={row.fileName}>
+                                            <div className="flex items-center gap-1.5 max-w-[190px] truncate" title={fr.fileName}>
                                                 <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                                                 <span className="truncate text-xs text-foreground font-medium">
-                                                    {row.fileName}
+                                                    {fr.fileName}
                                                 </span>
+                                                {fr.totalItemsInDoc > 1 && (
+                                                    <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1 rounded shrink-0">
+                                                        #{fr.rowIndex + 1}
+                                                    </span>
+                                                )}
                                             </div>
                                         </td>
 
-                                        {/* Dynamic Schema Columns */}
+                                        {/* Columns */}
                                         {columns.map(col => {
-                                            const rawObj = row.data?.[col];
-                                            const cellVal = getCellValue(rawObj);
-                                            const hasBox = isLocatedValue(rawObj);
-                                            const vStatus = row.verified?.[col] || "pending";
-                                            const isEditing = editingCell?.rowId === row.fileId && editingCell?.colKey === col;
-                                            const isEmpty = !cellVal || cellVal.trim() === "";
+                                            const cell = fr.cells[col];
+                                            const node = cell?.node;
+                                            const cellVal = getDisplayValue(node);
+                                            const hasBox = isLocatedValue(node);
+                                            const path = cell?.path || col;
+                                            const vStatus = parentDoc?.verified?.[path] || "pending";
+                                            const isEditing = editingCell?.rowId === fr.fileId && editingCell?.path === path;
+                                            const isEmpty = cellVal === "—" || cellVal.trim() === "";
 
                                             return (
                                                 <td
@@ -401,15 +478,15 @@ export function BatchDataTable({
                                                     className="py-1.5 px-3 relative group/cell"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        onSelectRow(row);
+                                                        if (parentDoc) onSelectRow(parentDoc);
                                                         if (hasBox) {
-                                                            onSelectCellHighlight(row, col, {
-                                                                box_2d: rawObj.box_2d,
-                                                                page: rawObj.page || 1,
-                                                                label: `${row.fileName} → ${formatHeader(col)}`,
+                                                            onSelectCellHighlight(parentDoc || { fileId: fr.fileId, fileName: fr.fileName, file: fr.file!, data: {}, status: fr.status, verified: {} }, col, {
+                                                                box_2d: node.box_2d,
+                                                                page: node.page || 1,
+                                                                label: `${fr.fileName} → ${formatHeader(col)}`,
                                                                 rawValue: cellVal,
-                                                                fileId: row.fileId,
-                                                                fileName: row.fileName,
+                                                                fileId: fr.fileId,
+                                                                fileName: fr.fileName,
                                                                 columnKey: col,
                                                             });
                                                         }
@@ -423,10 +500,10 @@ export function BatchDataTable({
                                                                 value={editValue}
                                                                 onChange={e => setEditValue(e.target.value)}
                                                                 onKeyDown={e => {
-                                                                    if (e.key === "Enter") handleSaveEdit(row.fileId, col);
+                                                                    if (e.key === "Enter") handleSaveEdit(fr.fileId, path);
                                                                     if (e.key === "Escape") setEditingCell(null);
                                                                 }}
-                                                                onBlur={() => handleSaveEdit(row.fileId, col)}
+                                                                onBlur={() => handleSaveEdit(fr.fileId, path)}
                                                                 className="h-6 w-full text-xs px-1.5 rounded border border-primary bg-background focus:outline-none focus:ring-1 focus:ring-primary"
                                                             />
                                                         </div>
@@ -437,41 +514,61 @@ export function BatchDataTable({
                                                                     <MapPin className="w-3 h-3 text-amber-500/70 shrink-0" />
                                                                 )}
                                                                 <span className={`truncate text-xs ${isEmpty ? "text-amber-500 italic" : "text-foreground"}`}>
-                                                                    {isEmpty ? "—" : cellVal}
+                                                                    {cellVal}
                                                                 </span>
                                                             </div>
 
-                                                            {/* Quick action buttons on hover */}
-                                                            <div className="flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-opacity">
-                                                                <button
-                                                                    type="button"
-                                                                    title="Редактировать"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        setEditingCell({ rowId: row.fileId, colKey: col });
-                                                                        setEditValue(cellVal);
-                                                                    }}
-                                                                    className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
-                                                                >
-                                                                    <Pencil className="w-3 h-3" />
-                                                                </button>
-                                                                {onToggleVerifyCell && (
+                                                            {/* Verification & Edit Actions on hover/status */}
+                                                            <div className="flex items-center gap-0.5 shrink-0">
+                                                                {vStatus === "auto_verified" && (
+                                                                    <span title="Автоматически проверено правилом" className="text-emerald-500/80">
+                                                                        <ShieldCheck className="w-3.5 h-3.5" />
+                                                                    </span>
+                                                                )}
+                                                                {vStatus === "verified" && (
+                                                                    <span title="Подтверждено пользователем" className="text-emerald-600 font-bold">
+                                                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                                                    </span>
+                                                                )}
+                                                                {vStatus === "edited" && (
+                                                                    <span title="Отредактировано" className="text-primary">
+                                                                        <Pencil className="w-3 h-3" />
+                                                                    </span>
+                                                                )}
+
+                                                                {/* Hover Buttons */}
+                                                                <div className="flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-opacity ml-1">
                                                                     <button
                                                                         type="button"
-                                                                        title={vStatus === "verified" ? "Подтверждено" : "Подтвердить значение"}
+                                                                        title="Редактировать значение"
                                                                         onClick={(e) => {
                                                                             e.stopPropagation();
-                                                                            onToggleVerifyCell(row.fileId, col);
+                                                                            setEditingCell({ rowId: fr.fileId, path });
+                                                                            setEditValue(cellVal === "—" ? "" : cellVal);
                                                                         }}
-                                                                        className={`p-1 rounded transition-colors ${
-                                                                            vStatus === "verified"
-                                                                                ? "text-emerald-500 bg-emerald-500/10"
-                                                                                : "text-muted-foreground hover:text-emerald-600 hover:bg-muted"
-                                                                        }`}
+                                                                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
                                                                     >
-                                                                        <Check className="w-3 h-3" />
+                                                                        <Pencil className="w-3 h-3" />
                                                                     </button>
-                                                                )}
+
+                                                                    {onToggleVerifyCell && (
+                                                                        <button
+                                                                            type="button"
+                                                                            title={vStatus === "verified" ? "Снять проверку" : "Отметить как проверенное"}
+                                                                            onClick={(e) => {
+                                                                                e.stopPropagation();
+                                                                                onToggleVerifyCell(fr.fileId, path);
+                                                                            }}
+                                                                            className={`p-1 rounded hover:bg-muted ${
+                                                                                vStatus === "verified"
+                                                                                    ? "text-emerald-600 hover:text-emerald-700"
+                                                                                    : "text-muted-foreground hover:text-foreground"
+                                                                            }`}
+                                                                        >
+                                                                            <Check className="w-3 h-3" />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                         </div>
                                                     )}
