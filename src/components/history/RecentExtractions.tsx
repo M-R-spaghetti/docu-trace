@@ -13,7 +13,6 @@ import {
     Clock,
     Search,
     Layers,
-    Receipt,
     Files,
     X,
     ExternalLink
@@ -273,7 +272,7 @@ export function RecentExtractions({
                     }`}
                 >
                     <FolderArchive className="w-3 h-3" />
-                    Пакеты чеков ({groupedSessions.filter(r => r.isBatch).length})
+                    Пакеты документов ({groupedSessions.filter(r => r.isBatch).length})
                 </button>
                 <button
                     onClick={() => setFilterType("single")}
@@ -283,7 +282,7 @@ export function RecentExtractions({
                             : "bg-muted text-muted-foreground hover:text-foreground"
                     }`}
                 >
-                    <Receipt className="w-3 h-3" />
+                    <FileText className="w-3 h-3" />
                     Одиночные ({groupedSessions.filter(r => !r.isBatch).length})
                 </button>
             </div>
@@ -307,7 +306,7 @@ export function RecentExtractions({
                                     {session.isBatch ? (
                                         <Layers className="w-5 h-5" />
                                     ) : (
-                                        <Receipt className="w-5 h-5" />
+                                        <FileText className="w-5 h-5" />
                                     )}
                                 </div>
                                 <div className="min-w-0">
@@ -418,7 +417,7 @@ export function RecentExtractions({
                                         Файлы в пакете ({viewingBatch.fileNames.length} файлов)
                                     </h4>
                                     <p className="text-xs text-muted-foreground">
-                                        Все загруженные чеки этой сессии
+                                        Все загруженные документы этой сессии
                                     </p>
                                 </div>
                             </div>
@@ -458,7 +457,7 @@ export function RecentExtractions({
                                             <span className="font-mono text-muted-foreground w-6 text-right shrink-0">
                                                 #{idx + 1}
                                             </span>
-                                            <Receipt className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                            <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                                             <span className="font-medium truncate" title={filename}>
                                                 {filename}
                                             </span>

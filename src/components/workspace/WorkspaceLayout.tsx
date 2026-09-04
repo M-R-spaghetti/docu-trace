@@ -4,7 +4,7 @@ import { useState, useRef } from "react";
 import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
-import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, Receipt, Search, X } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, FileText, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import { StreamingProgress } from "@/lib/streamingPipeline";
@@ -186,7 +186,7 @@ export function WorkspaceLayout({
                                                 <span className="font-mono text-[10px] text-muted-foreground w-5 text-right shrink-0">
                                                     #{f.pageNum}
                                                 </span>
-                                                <Receipt className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                                <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                                                 <span className="truncate text-foreground text-xs" title={f.name}>
                                                     {f.name}
                                                 </span>

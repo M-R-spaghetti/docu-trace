@@ -81,7 +81,7 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    prompt: opts.prompt || "Extract receipt or invoice data: store, date, items, subtotal, tax, total.",
+                    prompt: opts.prompt || "Extract all key entities, structured tables, and important data points from this document.",
                     format: opts.format || "table",
                 }),
                 signal: opts.signal,

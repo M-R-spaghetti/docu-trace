@@ -126,7 +126,7 @@ export function DragDropZone({ onFileAccepted, onFilesAccepted }: DragDropZonePr
                                     {isDragActive ? "Drop document here" : "Upload your document"}
                                 </h3>
                                 <p className="text-sm text-muted-foreground max-w-sm">
-                                    Drag and drop your invoices or receipts here, or click to browse. Supports single documents or batch folder drops.
+                                    Drag and drop any documents here (PDFs, contracts, invoices, bank statements, forms, scans), or click to browse. Supports single files or batch drops.
                                 </p>
                             </div>
                         </motion.div>

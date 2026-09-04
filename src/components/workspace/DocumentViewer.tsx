@@ -274,13 +274,13 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
 
     return (
         <div className="relative w-full h-full flex flex-col items-center justify-start overflow-hidden bg-muted/20 border rounded-xl shadow-sm">
-            {/* Top Navigation Bar for Multi-Receipt Batch */}
+            {/* Top Navigation Bar for Multi-Document Batch */}
             {isBatchMode && batchFiles && (
                 <div className="w-full flex items-center justify-between px-3 py-2 bg-background/95 backdrop-blur-md border-b text-xs shrink-0 z-20 shadow-xs">
                     <div className="flex items-center gap-2 min-w-0">
-                        <Receipt className="w-4 h-4 text-primary shrink-0" />
+                        <FileText className="w-4 h-4 text-primary shrink-0" />
                         <span className="font-bold text-foreground">
-                            Чек {currentBatchPage} из {batchFiles.length}
+                            Документ {currentBatchPage} из {batchFiles.length}
                         </span>
                         <span className="text-muted-foreground font-mono text-[11px] truncate max-w-[200px]" title={activeFile.name}>
                             ({activeFile.name})
@@ -294,7 +294,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
                             className="h-7 w-7 rounded-md"
                             disabled={currentBatchPage <= 1}
                             onClick={() => setCurrentBatchPage(p => Math.max(1, p - 1))}
-                            title="Предыдущий чек (←)"
+                            title="Предыдущий документ (←)"
                         >
                             <ChevronLeft className="w-4 h-4" />
                         </Button>
@@ -307,7 +307,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
                             className="h-7 w-7 rounded-md"
                             disabled={currentBatchPage >= batchFiles.length}
                             onClick={() => setCurrentBatchPage(p => Math.min(batchFiles.length, p + 1))}
-                            title="Следующий чек (→)"
+                            title="Следующий документ (→)"
                         >
                             <ChevronRight className="w-4 h-4" />
                         </Button>

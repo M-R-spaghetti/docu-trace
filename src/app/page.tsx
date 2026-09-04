@@ -114,7 +114,7 @@ export default function Home() {
         id: recordId,
         sessionId,
         file: batchFileObjects[0],
-        prompt: prompt.trim() || "Extract all item details, quantities, prices, and totals.",
+        prompt: prompt.trim() || "Extract all key entities, structured tables, and important data points from this document.",
         format,
         extractedData: { items: [] },
         verificationState: {},
@@ -369,7 +369,7 @@ export default function Home() {
               transition={{ duration: 0.5, delay: 0.2 }}
               className="text-lg text-muted-foreground max-w-2xl mx-auto"
             >
-              Instantly extract, verify, and trace structured data from invoices and receipts with our human-in-the-loop verification system.
+              Instantly extract, verify, and trace structured data from any documents, contracts, reports, and invoices with human-in-the-loop verification.
             </motion.p>
           </div>
         )}
@@ -388,9 +388,9 @@ export default function Home() {
                 <div className="p-4 bg-primary/10 rounded-2xl mb-4 text-primary">
                   <Layers className="w-10 h-10 animate-pulse" />
                 </div>
-                <h3 className="text-xl font-bold">Stitching Receipts into Unified Document...</h3>
+                <h3 className="text-xl font-bold">Preparing Documents...</h3>
                 <p className="text-sm text-muted-foreground mt-1 max-w-sm">
-                  Merging {batchFileCount} receipt scans into one high-res multi-page document ({stitchProgress}%)...
+                  Preparing {batchFileCount} documents for streaming extraction ({stitchProgress}%)...
                 </p>
               </motion.div>
             )}

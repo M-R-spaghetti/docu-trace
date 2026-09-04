@@ -159,7 +159,7 @@ export async function runBatchOrchestration(opts: RunBatchOptions): Promise<Batc
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    prompt: opts.prompt || "Extract receipt or invoice information: store name, date, items, subtotal, tax, total.",
+                    prompt: opts.prompt || "Extract all key entities, structured tables, and important data points from this document.",
                     format: opts.format || "table",
                 }),
                 signal: opts.signal,

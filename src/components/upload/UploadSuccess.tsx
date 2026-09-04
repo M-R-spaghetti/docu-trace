@@ -34,16 +34,20 @@ export function UploadSuccess({
 
     const quickTemplates = [
         {
-            label: "🧾 Только товары (без шапки)",
-            text: "Извлеки исключительно таблицу позиций/товаров: название (name), количество (qty), цена (price), сумма (total). Данные магазина, адрес, дату и шапку чека НЕ извлекать."
+            label: "📋 Ключевые данные (Авто)",
+            text: "Извлеки все ключевые данные, реквизиты, даты, таблицы и списки из документа."
         },
         {
-            label: "📊 Полный аудит чека",
-            text: "Извлеки все данные: название магазина, дата, время, все позиции товаров с количеством и ценами, налоги и итоговую сумму."
+            label: "📑 Договор / Соглашение",
+            text: "Извлеки стороны договора, предмет соглашения, ключевые условия, сроки действия, финансовые обязательства, штрафные санкции и подписи."
         },
         {
-            label: "💰 Только итоги",
-            text: "Извлеки только дату, номер чека и итоговую сумму к оплате."
+            label: "🧾 Таблицы / Позиции",
+            text: "Извлеки исключительно таблицу позиций/строк: наименование, количество, цену и сумму. Без шапки и метаданных документа."
+        },
+        {
+            label: "🏦 Банковская выписка",
+            text: "Извлеки номер счета, период, начальный/конечный остаток и таблицу транзакций (дата, контрагент, назначение, сумма)."
         }
     ];
 
@@ -76,12 +80,12 @@ export function UploadSuccess({
 
                         <div className="space-y-2">
                             <h2 className="text-2xl font-semibold tracking-tight">
-                                {isBatch ? `Пакет чеков готов (${batchCount} файлов)` : "Document Ready"}
+                                {isBatch ? `Пакет документов готов (${batchCount} файлов)` : "Документ готов к анализу"}
                             </h2>
                             <p className="text-muted-foreground text-xs sm:text-sm">
                                 {isBatch
-                                    ? "Все чеки загружены. Укажи, какие именно поля нужно извлечь перед запуском."
-                                    : "Your file has been securely uploaded and is ready for AI extraction."
+                                    ? "Все файлы подготовлены. Напиши произвольный поисковый запрос или выбери шаблон."
+                                    : "Документ загружен. Задай любой поисковый запрос или выбери шаблон данных."
                                 }
                             </p>
                         </div>
@@ -94,17 +98,17 @@ export function UploadSuccess({
                         >
                             <div className="p-2 bg-background rounded-lg shadow-sm shrink-0">
                                 {isBatch ? (
-                                    <Layers className="w-6 h-6 text-amber-500" />
+                                    <Layers className="w-6 h-6 text-primary" />
                                 ) : (
                                     <FileText className="w-6 h-6 text-primary/80" />
                                 )}
                             </div>
                             <div className="flex flex-col items-start overflow-hidden w-full text-left">
                                 <span className="font-medium text-sm truncate max-w-[200px] md:max-w-xs">
-                                    {isBatch ? `Пакет из ${batchCount} файлов` : file.name}
+                                    {isBatch ? `Пакет из ${batchCount} документов` : file.name}
                                 </span>
                                 <span className="text-xs text-muted-foreground">
-                                    {isBatch ? "Многостраничный пакет" : (file.type || "Document")} • {formatBytes(totalBatchBytes)}
+                                    {isBatch ? "Многостраничный пакет документов" : (file.type || "Document")} • {formatBytes(totalBatchBytes)}
                                 </span>
                             </div>
                         </motion.div>
