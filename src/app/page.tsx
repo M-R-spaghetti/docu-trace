@@ -164,24 +164,48 @@ export default function Home() {
       }
     }
 
-    // If multi-page PDF, use progressive streaming pipeline!
-    if (file.type === "application/pdf") {
+    // If PDF (single or multi-page), use progressive streaming pipeline!
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    if (isPdf) {
       setIsExtracting(true);
       batchAbortControllerRef.current = new AbortController();
 
+      const sessionId = `pdf_${Date.now()}`;
+      const recordId = Date.now().toString();
+      setCurrentSessionId(sessionId);
+      setCurrentHistoryId(recordId);
+
+      const initialRecord: HistoryRecord = {
+        id: recordId,
+        sessionId,
+        file,
+        prompt: prompt.trim() || "Extract all key entities, structured tables, and important data points from this document.",
+        format,
+        extractedData: { items: [] },
+        verificationState: {},
+        timestamp: Date.now(),
+      };
+      saveHistory(initialRecord).then(() => {
+        setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
+      }).catch(console.error);
+
       try {
         let firstChunkReady = false;
+        let finalAggregated: any = null;
+
         await runStreamingPipeline({
           file,
           prompt: prompt.trim() || undefined,
           format,
           chunkSize: 5,
           onChunkSuccess: (chunkData, remappedData, aggregatedData) => {
+            finalAggregated = aggregatedData;
             setExtractedData({ ...aggregatedData });
             if (!firstChunkReady) {
               firstChunkReady = true;
               setIsExtracting(false); // Switch to workspace immediately on first chunk!
             }
+            updateHistory(recordId, { extractedData: aggregatedData }).catch(console.error);
           },
           onProgress: (prog) => {
             setStreamingProgress(prog);
@@ -189,6 +213,9 @@ export default function Home() {
           signal: batchAbortControllerRef.current.signal,
         });
 
+        if (finalAggregated) {
+          await updateHistory(recordId, { extractedData: finalAggregated }).catch(console.error);
+        }
         return;
       } catch (err: any) {
         setIsExtracting(false);

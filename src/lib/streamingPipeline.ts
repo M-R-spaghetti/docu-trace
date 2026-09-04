@@ -38,9 +38,25 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
     let totalChunks = 0;
     let precomputedChunks: PdfChunk[] | null = null;
 
+    interface BatchChunkPlan {
+        startIdx: number;
+        endIdx: number;
+    }
+    const batchPlans: BatchChunkPlan[] = [];
+
     if (isImageBatch) {
         totalPages = opts.batchFiles!.length;
-        totalChunks = Math.ceil(totalPages / chunkSize);
+        let cur = 0;
+        let isFirst = true;
+        while (cur < totalPages) {
+            // First chunk is strictly 1 file so workspace opens in ~1.5s!
+            const thisSize = (isFirst && totalPages > 1) ? 1 : chunkSize;
+            const next = Math.min(cur + thisSize, totalPages);
+            batchPlans.push({ startIdx: cur, endIdx: next });
+            cur = next;
+            isFirst = false;
+        }
+        totalChunks = batchPlans.length;
     } else if (opts.file) {
         const bytes = await opts.file.arrayBuffer();
         precomputedChunks = await slicePdfChunks(bytes, chunkSize);
@@ -105,10 +121,9 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
 
         let chunk: PdfChunk;
         if (isImageBatch) {
-            const startIdx = chunkIdx * chunkSize;
-            const endIdx = Math.min(startIdx + chunkSize, totalPages);
-            const chunkImages = opts.batchFiles!.slice(startIdx, endIdx);
-            chunk = await createChunkFromImageFiles(chunkImages, startIdx, chunkIdx + 1);
+            const plan = batchPlans[chunkIdx];
+            const chunkImages = opts.batchFiles!.slice(plan.startIdx, plan.endIdx);
+            chunk = await createChunkFromImageFiles(chunkImages, plan.startIdx, chunkIdx + 1);
         } else {
             chunk = precomputedChunks![chunkIdx];
         }

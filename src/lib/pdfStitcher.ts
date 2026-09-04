@@ -92,8 +92,12 @@ export async function slicePdfChunks(
     const chunks: PdfChunk[] = [];
 
     let currentStart = 0;
+    let isFirstChunk = true;
+
     while (currentStart < totalPages) {
-        const count = Math.min(chunkSize, totalPages - currentStart);
+        // Fast-start: First chunk is strictly 1 page so results appear immediately in ~1.5s!
+        const effectiveChunkSize = (isFirstChunk && totalPages > 1) ? 1 : chunkSize;
+        const count = Math.min(effectiveChunkSize, totalPages - currentStart);
         const pageIndices = Array.from({ length: count }, (_, i) => currentStart + i);
 
         const subDoc = await PDFDocument.create();
@@ -119,6 +123,7 @@ export async function slicePdfChunks(
         });
 
         currentStart += count;
+        isFirstChunk = false;
     }
 
     return chunks;
