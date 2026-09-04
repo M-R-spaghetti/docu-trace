@@ -203,8 +203,8 @@ export async function runReceiptBatch(
 
     await Promise.all(files.map(f => processFile(f)));
 
-    // Autonomous Multi-Pass Auto-Retry for failed / timed-out files
-    const maxPasses = opts.maxAutoRetryPasses ?? 2;
+    // Autonomous Multi-Pass Auto-Retry for failed / timed-out files (up to 5 automatic retry rounds under the hood)
+    const maxPasses = opts.maxAutoRetryPasses ?? 6;
     let pass = 1;
     let currentRows = Array.from(rowsMap.values());
     let failedRows = currentRows.filter(r => r.status === "failed" || r.status === "timeout");
@@ -212,10 +212,14 @@ export async function runReceiptBatch(
     while (failedRows.length > 0 && pass < maxPasses && !opts.signal?.aborted) {
         pass++;
         const count = failedRows.length;
-        opts.onStatusMessage?.(`Авто-дожим: перезапуск ${count} ${count === 1 ? 'чека' : 'чеков'} через 6 сек (раунд ${pass}/${maxPasses})...`);
+        const cooldownSeconds = Math.min(30, 8 + (pass - 2) * 6);
 
-        // Cooldown 6s to drain rate limit RPM buckets
-        await new Promise(r => setTimeout(r, 6000));
+        // Progressive cooldown countdown to let Gemini 1-minute RPM bucket drain
+        for (let remainingSec = cooldownSeconds; remainingSec > 0; remainingSec--) {
+            if (opts.signal?.aborted) break;
+            opts.onStatusMessage?.(`Ожидание квоты API (${remainingSec}с) перед автоповтором ${count} ${count === 1 ? 'чека' : 'чеков'} (раунд ${pass - 1}/${maxPasses - 1})...`);
+            await new Promise(r => setTimeout(r, 1000));
+        }
         if (opts.signal?.aborted) break;
 
         opts.onStatusMessage?.(`Авто-дожим: извлечение ${count} ${count === 1 ? 'чека' : 'чеков'}...`);
@@ -223,9 +227,11 @@ export async function runReceiptBatch(
         const filesToRetry = failedRows.map(r => r.file).filter(Boolean) as File[];
         if (filesToRetry.length === 0) break;
 
+        // Gentle concurrency on retry (1 or 2 files at a time) to guarantee zero 429 burst errors
+        const retryConcurrency = Math.min(2, Math.max(1, Math.floor((opts.concurrency ?? 2) / 2)));
         const retryLimiter = createLimiter({
-            maxConcurrent: Math.min(2, opts.concurrency ?? 2),
-            maxPerMinute: opts.rpm ?? 12,
+            maxConcurrent: retryConcurrency,
+            maxPerMinute: Math.min(10, opts.rpm ?? 10),
         });
 
         await Promise.all(filesToRetry.map(async (raw) => {
@@ -281,6 +287,10 @@ export async function runReceiptBatch(
                 };
                 rowsMap.set(fileId, errRow);
                 opts.onRow(errRow);
+            } finally {
+                // Live progress count update: done / total
+                const currentDone = Array.from(rowsMap.values()).filter(r => r.status === "done").length;
+                opts.onProgress(currentDone, files.length);
             }
         }));
 

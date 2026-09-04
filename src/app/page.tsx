@@ -206,6 +206,10 @@ export default function Home() {
           sessionId,
           concurrency: 4,
           rpm: 12,
+          maxAutoRetryPasses: 6,
+          onStatusMessage: (msg) => {
+            updateSession(recordId, { statusMessage: msg });
+          },
           onRow: (row) => {
             updateSession(recordId, prev => {
               const prevRows = prev.batchRows || [];
@@ -229,7 +233,7 @@ export default function Home() {
           signal: abortController.signal,
         });
 
-        updateSession(recordId, { isProcessingBatch: false });
+        updateSession(recordId, { isProcessingBatch: false, statusMessage: undefined });
       } catch (err: any) {
         if (err.name === "AbortError" || abortController.signal.aborted) return;
         console.error("Batch extraction error:", err);
@@ -408,6 +412,10 @@ export default function Home() {
         sessionId: sessId,
         concurrency: 4,
         rpm: 12,
+        maxAutoRetryPasses: 6,
+        onStatusMessage: (msg) => {
+          updateSession(sessId, { statusMessage: msg });
+        },
         onRow: (row) => {
           updateSession(sessId, prev => {
             const prevRows = prev.batchRows || [];
@@ -433,7 +441,7 @@ export default function Home() {
     } catch (err: any) {
       console.error("Retry failed batch error:", err);
     } finally {
-      updateSession(sessId, { isProcessingBatch: false });
+      updateSession(sessId, { isProcessingBatch: false, statusMessage: undefined });
     }
   };
 

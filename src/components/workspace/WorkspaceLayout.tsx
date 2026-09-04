@@ -55,7 +55,7 @@ export function WorkspaceLayout({
     schema,
     isProcessingBatch,
 }: WorkspaceLayoutProps) {
-    const { switchToSession } = useSessionContext();
+    const { switchToSession, activeSession } = useSessionContext();
     const isBatchMode = Boolean(batchRows && batchRows.length > 0);
     const [selectedBatchFile, setSelectedBatchFile] = useState<File>(file);
     const [selectedBatchRowId, setSelectedBatchRowId] = useState<string | undefined>(undefined);
@@ -191,6 +191,12 @@ export function WorkspaceLayout({
                     {isBatchMode && batchRows && (
                         <span className="text-[10px] font-mono bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium shrink-0">
                             {batchRows.filter(r => r.status === 'done').length}/{batchRows.length} готово
+                        </span>
+                    )}
+                    {activeSession?.statusMessage && (
+                        <span className="inline-flex items-center gap-1.5 text-amber-500 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full font-mono text-[10.5px] font-medium shadow-xs animate-pulse truncate max-w-xs md:max-w-md">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
+                            <span className="truncate">{activeSession.statusMessage}</span>
                         </span>
                     )}
                 </div>
