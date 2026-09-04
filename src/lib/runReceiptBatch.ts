@@ -1,10 +1,9 @@
 import { optimizeImageFile } from "./media";
 import { createLimiter } from "./batch/limiter";
 import { withRetry, HttpError } from "./batch/retry";
-import { hashFile } from "./batch/orchestrator";
 import { saveHistory } from "./db";
-import { DocRow, RowVerificationStatus } from "./batchTypes";
-import { runAutoVerification } from "./autoVerification";
+import { DocRow } from "./batchTypes";
+import { generateFileId, auditReceiptDoc } from "./review";
 
 export interface RunReceiptBatchOptions {
     prompt?: string;
@@ -86,7 +85,7 @@ async function extractOne(
  * - Controlled concurrency (default 4) and rate limiting (default 12 RPM)
  * - 90s isolated timeout per file preventing stuck slots
  * - Real-time onRow streaming and IndexedDB persistence
- * - Client-side rule-based auto-verification
+ * - Client-side strict two-axis audit checks (auto: ok/warn/error, human: unreviewed)
  */
 export async function runReceiptBatch(
     files: File[],
@@ -102,21 +101,23 @@ export async function runReceiptBatch(
     const sessionId = opts.sessionId || `batch_${Date.now()}`;
     const rowsMap = new Map<string, DocRow>();
 
-    // Initial placeholder rows so table renders immediately
+    // Initial placeholder rows with consistent fileId so table renders immediately
     for (const f of files) {
+        const fileId = generateFileId(f);
         const row: DocRow = {
-            fileId: f.name,
+            fileId,
             fileName: f.name,
             file: f,
             data: {},
             status: "queued",
-            verified: {},
+            reviews: {},
         };
-        rowsMap.set(f.name, row);
+        rowsMap.set(fileId, row);
     }
 
     const processFile = async (raw: File) => {
-        let fileId = raw.name;
+        const fileId = generateFileId(raw);
+
         if (opts.signal?.aborted) {
             const abortedRow: DocRow = {
                 fileId,
@@ -125,9 +126,9 @@ export async function runReceiptBatch(
                 data: {},
                 status: "failed",
                 error: "Batch cancelled by user",
-                verified: {},
+                reviews: {},
             };
-            rowsMap.set(raw.name, abortedRow);
+            rowsMap.set(fileId, abortedRow);
             opts.onRow(abortedRow);
             opts.onProgress(++finished, files.length);
             return;
@@ -139,21 +140,16 @@ export async function runReceiptBatch(
             file: raw,
             data: {},
             status: "extracting",
-            verified: {},
+            reviews: {},
         };
-        rowsMap.set(raw.name, extractingRow);
+        rowsMap.set(fileId, extractingRow);
         opts.onRow(extractingRow);
 
         try {
             const resData = await extractOne(raw, schema, opts, limiter);
-            try {
-                fileId = await hashFile(raw);
-            } catch {
-                fileId = raw.name;
-            }
 
-            // Run deterministic auto-verification
-            const verifiedMap = runAutoVerification(fileId, resData);
+            // Run strict deterministic audit check (two-axis: auto + human)
+            const reviews = auditReceiptDoc(resData);
 
             const doneRow: DocRow = {
                 fileId,
@@ -161,9 +157,9 @@ export async function runReceiptBatch(
                 file: raw,
                 data: resData,
                 status: "done",
-                verified: verifiedMap,
+                reviews,
             };
-            rowsMap.set(raw.name, doneRow);
+            rowsMap.set(fileId, doneRow);
 
             // Save row to IndexedDB immediately!
             try {
@@ -193,9 +189,9 @@ export async function runReceiptBatch(
                 data: {},
                 status: isTimeout ? "timeout" : "failed",
                 error: errMsg,
-                verified: {},
+                reviews: {},
             };
-            rowsMap.set(raw.name, errRow);
+            rowsMap.set(fileId, errRow);
             opts.onRow(errRow);
         } finally {
             opts.onProgress(++finished, files.length);

@@ -2,8 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
-import { DocRow } from "@/lib/batchTypes";
-import { setByPath } from "@/lib/flatten";
+import { DocRow, HumanReview } from "@/lib/batchTypes";
+import { setByPath, explodeDoc } from "@/lib/flatten";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
 import { BatchDataTable } from "./BatchDataTable";
@@ -312,11 +312,71 @@ export function WorkspaceLayout({
                                 onSelectRow={(row) => {
                                     setSelectedBatchRowId(row.fileId);
                                     if (row.file) setSelectedBatchFile(row.file);
+                                    setActiveHighlight(prev => {
+                                        if (!prev) return null;
+                                        if (prev.fileId && prev.fileId !== row.fileId) return null;
+                                        if (prev.fileName && prev.fileName !== row.fileName) return null;
+                                        return prev;
+                                    });
                                 }}
                                 onSelectCellHighlight={(row, colKey, hl) => {
                                     setSelectedBatchRowId(row.fileId);
                                     if (row.file) setSelectedBatchFile(row.file);
                                     setActiveHighlight(hl);
+                                }}
+                                onConfirmCell={(rowId, path) => {
+                                    if (!onBatchRowsChange) return;
+                                    const updated = batchRows.map(r => {
+                                        if (r.fileId === rowId) {
+                                            const currRev = r.reviews?.[path] || { auto: "ok", reasons: [], human: "unreviewed" };
+                                            const nextHuman: HumanReview = currRev.human === "confirmed" ? "unreviewed" : "confirmed";
+                                            return {
+                                                ...r,
+                                                reviews: {
+                                                    ...r.reviews,
+                                                    [path]: {
+                                                        ...currRev,
+                                                        human: nextHuman,
+                                                        reviewedAt: Date.now(),
+                                                    },
+                                                },
+                                            };
+                                        }
+                                        return r;
+                                    });
+                                    onBatchRowsChange(updated);
+                                }}
+                                onConfirmRow={(rowId, rowIndex) => {
+                                    if (!onBatchRowsChange) return;
+                                    const updated = batchRows.map(r => {
+                                        if (r.fileId === rowId) {
+                                            const flatList = explodeDoc(r.fileId, r.fileName, r.data, r.file, r.status, r.error);
+                                            const targetRow = flatList[rowIndex];
+                                            if (!targetRow) return r;
+                                            const newReviews = { ...r.reviews };
+                                            for (const cell of Object.values(targetRow.cells)) {
+                                                const curr = newReviews[cell.path] || { auto: "ok", reasons: [], human: "unreviewed" };
+                                                newReviews[cell.path] = { ...curr, human: "confirmed", reviewedAt: Date.now() };
+                                            }
+                                            return { ...r, reviews: newReviews };
+                                        }
+                                        return r;
+                                    });
+                                    onBatchRowsChange(updated);
+                                }}
+                                onConfirmDoc={(rowId) => {
+                                    if (!onBatchRowsChange) return;
+                                    const updated = batchRows.map(r => {
+                                        if (r.fileId === rowId) {
+                                            const newReviews = { ...r.reviews };
+                                            for (const k of Object.keys(newReviews)) {
+                                                newReviews[k] = { ...newReviews[k], human: "confirmed", reviewedAt: Date.now() };
+                                            }
+                                            return { ...r, reviews: newReviews };
+                                        }
+                                        return r;
+                                    });
+                                    onBatchRowsChange(updated);
                                 }}
                                 onUpdateCell={(rowId, path, newVal) => {
                                     if (!onBatchRowsChange) return;
@@ -324,10 +384,18 @@ export function WorkspaceLayout({
                                         if (r.fileId === rowId) {
                                             const updatedData = JSON.parse(JSON.stringify(r.data || {}));
                                             setByPath(updatedData, path, newVal);
+                                            const currRev = r.reviews?.[path] || { auto: "ok", reasons: [], human: "unreviewed" };
                                             return {
                                                 ...r,
                                                 data: updatedData,
-                                                verified: { ...r.verified, [path]: 'edited' as const },
+                                                reviews: {
+                                                    ...r.reviews,
+                                                    [path]: {
+                                                        ...currRev,
+                                                        human: "corrected" as const,
+                                                        reviewedAt: Date.now(),
+                                                    },
+                                                },
                                             };
                                         }
                                         return r;
@@ -338,11 +406,18 @@ export function WorkspaceLayout({
                                     if (!onBatchRowsChange) return;
                                     const updated = batchRows.map(r => {
                                         if (r.fileId === rowId) {
-                                            const currentStatus = r.verified?.[path] || 'pending';
-                                            const nextStatus = currentStatus === 'verified' ? ('pending' as const) : ('verified' as const);
+                                            const currRev = r.reviews?.[path] || { auto: "ok", reasons: [], human: "unreviewed" };
+                                            const nextHuman: HumanReview = currRev.human === "confirmed" ? "unreviewed" : "confirmed";
                                             return {
                                                 ...r,
-                                                verified: { ...r.verified, [path]: nextStatus },
+                                                reviews: {
+                                                    ...r.reviews,
+                                                    [path]: {
+                                                        ...currRev,
+                                                        human: nextHuman,
+                                                        reviewedAt: Date.now(),
+                                                    },
+                                                },
                                             };
                                         }
                                         return r;

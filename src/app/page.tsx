@@ -17,6 +17,7 @@ import { saveHistory, getHistory, HistoryRecord, deleteHistory, updateHistory, c
 import { VerificationStateMap } from "@/lib/types";
 import { runReceiptBatch, retryFailedBatchFiles } from "@/lib/runReceiptBatch";
 import { DocRow } from "@/lib/batchTypes";
+import { generateFileId } from "@/lib/review";
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -79,6 +80,25 @@ export default function Home() {
     }
   }, [currentHistoryId]);
 
+  // Auto-persist batchRows & reviews into IndexedDB (debounced 600ms)
+  useEffect(() => {
+    if (!currentHistoryId || !isBatchMode || batchRows.length === 0) return;
+
+    const timer = setTimeout(() => {
+      const safeRows = batchRows.map(r => ({
+        ...r,
+        file: undefined,
+      }));
+      updateHistory(currentHistoryId, {
+        batchRows: safeRows,
+        batchSchema,
+        timestamp: Date.now(),
+      }).catch(console.warn);
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [batchRows, batchSchema, currentHistoryId, isBatchMode]);
+
   useEffect(() => {
     getHistory().then(setHistory).catch(console.error);
   }, []);
@@ -140,16 +160,36 @@ export default function Home() {
 
         // Step 2: Initialize placeholder rows for immediate UI render
         const initialRows: DocRow[] = batchFileObjects.map(f => ({
-          fileId: f.name,
+          fileId: generateFileId(f),
           fileName: f.name,
           file: f,
           data: {},
           status: "queued",
-          verified: {},
+          reviews: {},
         }));
         setBatchRows(initialRows);
         setBatchTotalCount(batchFileObjects.length);
         setBatchCompletedCount(0);
+
+        const initialRecord: HistoryRecord = {
+          id: recordId,
+          sessionId,
+          file: batchFileObjects[0],
+          prompt: prompt.trim() || "Extract store name, date, total, and items.",
+          format: "table",
+          extractedData: { batch: true, schema: masterSchema },
+          timestamp: Date.now(),
+          batchInfo: {
+            totalFiles: batchFileObjects.length,
+            fileNames: batchFileObjects.map(f => f.name),
+            fileSizes: batchFileObjects.map(f => f.size),
+          },
+          batchSchema: masterSchema,
+          batchRows: initialRows.map(r => ({ ...r, file: undefined })),
+        };
+        saveHistory(initialRecord).then(() => {
+          setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
+        }).catch(console.error);
 
         // Switch to workspace immediately so the user sees all files in the master table!
         setExtractedData({ batch: true, schema: masterSchema });
@@ -514,6 +554,19 @@ export default function Home() {
                     setVerificationState(record.verificationState || {});
                     setCurrentSessionId(record.sessionId);
                     setCurrentHistoryId(record.id);
+
+                    if (record.batchRows && record.batchRows.length > 0) {
+                      setIsBatchMode(true);
+                      setBatchRows(record.batchRows);
+                      setBatchSchema(record.batchSchema || null);
+                      setBatchTotalCount(record.batchRows.length);
+                      setBatchCompletedCount(record.batchRows.filter((r: any) => r.status === "done").length);
+                    } else {
+                      setIsBatchMode(false);
+                      setBatchRows([]);
+                      setBatchSchema(null);
+                    }
+
                     if (record.batchInfo?.fileNames) {
                       setBatchFiles(record.batchInfo.fileNames.map((name, i) => ({
                         name,

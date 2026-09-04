@@ -1,5 +1,3 @@
-import { RowVerificationStatus } from "./batchTypes";
-
 export interface FlatRowCell {
     path: string;
     node: any;

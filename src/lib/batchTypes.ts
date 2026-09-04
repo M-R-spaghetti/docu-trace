@@ -1,13 +1,15 @@
-export type RowVerificationStatus = "pending" | "verified" | "edited" | "auto_verified";
+import { CellReview, AutoCheck, HumanReview } from "./review";
+
+export type { CellReview, AutoCheck, HumanReview };
 
 export interface DocRow {
-    fileId: string;                  // sha-256 hash of content or unique identifier
+    fileId: string;                  // Consistent deterministic unique identifier
     fileName: string;
     file: File;
     data: Record<string, any>;       // { price: { value, box_2d, page: 1 }, items: [...] }
     status: "queued" | "extracting" | "done" | "failed" | "timeout";
     error?: string;
-    verified: Record<string, RowVerificationStatus>;
+    reviews: Record<string, CellReview>;
     editedValues?: Record<string, string>;
 }
 
