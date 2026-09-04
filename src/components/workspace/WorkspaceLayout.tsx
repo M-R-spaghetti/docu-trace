@@ -25,6 +25,7 @@ interface WorkspaceLayoutProps {
     isRefining?: boolean;
     onRefine?: (newPrompt: string) => Promise<void>;
     onDataChange?: (updatedExtracted: any, updatedVerificationState: VerificationStateMap) => void;
+    onFileChange?: (file: File) => void;
     verificationState?: VerificationStateMap;
     streamingProgress?: StreamingProgress | null;
     batchFiles?: { name: string; size: number }[];
@@ -42,6 +43,7 @@ export function WorkspaceLayout({
     isRefining,
     onRefine,
     onDataChange,
+    onFileChange,
     verificationState,
     streamingProgress,
     batchFiles,
@@ -66,6 +68,31 @@ export function WorkspaceLayout({
         }
         return isBatchMode ? 680 : 450;
     });
+
+    useEffect(() => {
+        if (file) {
+            setSelectedBatchFile(file);
+        }
+    }, [file]);
+
+    const handleFileReplaced = (newFile: File) => {
+        setSelectedBatchFile(newFile);
+        onFileChange?.(newFile);
+    };
+
+    const handleSetActiveHighlight = (hl: ActiveHighlight | null) => {
+        setActiveHighlight(hl);
+        if (hl?.fileName && batchFileObjects && batchFileObjects.length > 0) {
+            const targetName = hl.fileName.toLowerCase();
+            const found = batchFileObjects.find(f => {
+                const fn = f.name.toLowerCase();
+                return fn === targetName || fn.includes(targetName) || targetName.includes(fn);
+            });
+            if (found && found !== selectedBatchFile) {
+                setSelectedBatchFile(found);
+            }
+        }
+    };
 
     // Auto-expand sidebar when batch mode activates
     useEffect(() => {
@@ -271,7 +298,12 @@ export function WorkspaceLayout({
                     )}
                 </div>
 
-                <DocumentViewer file={selectedBatchFile || file} activeHighlight={activeHighlight} batchFiles={batchFileObjects} />
+                <DocumentViewer
+                    file={selectedBatchFile || file}
+                    activeHighlight={activeHighlight}
+                    batchFiles={batchFileObjects}
+                    onFileReplaced={handleFileReplaced}
+                />
             </div>
 
             {/* Resizer Handle */}
@@ -469,10 +501,10 @@ export function WorkspaceLayout({
                         ) : (
                             <DataTable
                                 extracted={data}
-                                setActiveHighlight={setActiveHighlight}
+                                setActiveHighlight={handleSetActiveHighlight}
                                 onDataChange={onDataChange}
                                 initialVerificationState={verificationState}
-                                filename={file.name}
+                                filename={selectedBatchFile?.name || file.name}
                             />
                         )}
                     </div>

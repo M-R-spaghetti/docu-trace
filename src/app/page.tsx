@@ -640,6 +640,12 @@ export default function Home() {
                   isRefining={isRefining}
                   onRefine={handleRefine}
                   onDataChange={handleDataChange}
+                  onFileChange={(newFile) => {
+                    setFile(newFile);
+                    if (currentHistoryId) {
+                      updateHistory(currentHistoryId, { file: newFile }).catch(console.error);
+                    }
+                  }}
                   verificationState={verificationState}
                   streamingProgress={streamingProgress}
                   batchFiles={batchFiles}
