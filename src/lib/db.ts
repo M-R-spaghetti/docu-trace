@@ -16,6 +16,7 @@ export interface HistoryRecord {
     };
     batchRows?: any[];
     batchSchema?: any;
+    batchFiles?: File[];
 }
 
 const DB_NAME = 'docutrace_db';

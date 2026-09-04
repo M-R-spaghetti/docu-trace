@@ -1,10 +1,16 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Check, CheckCheck, Pencil, X, Play, Keyboard, Download, ChevronLeft, ChevronRight, Eye } from "lucide-react";
+import { Check, CheckCheck, Pencil, X, Play, Keyboard, Download, ChevronLeft, ChevronRight, Eye, Sliders } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportToCSV, exportToExcel, exportToJSON } from "@/lib/export";
 import { parseDocDate } from "@/lib/parseDocDate";
+import {
+    NormalizationSettings,
+    getStoredNormalizationSettings,
+    normalizeValue
+} from "@/lib/normalization";
+import { NormalizationSettingsModal } from "@/components/workspace/NormalizationSettingsModal";
 import { toast } from "sonner";
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -55,6 +61,43 @@ function getDisplayValue(v: any): string {
     if (v === null || v === undefined) return '-';
     if (isLocatedValue(v)) return String(v.value);
     return String(v);
+}
+
+// Helper: robustly extract source document filename from an item or located value
+function extractItemSource(item: any, fallback?: string): string | undefined {
+    if (!item || typeof item !== 'object') return fallback;
+
+    const candidateKeys = [
+        'source_document', 'sourceDocument', 'source_doc', 'sourceDoc',
+        'source_file', 'sourceFile', 'source_image', 'sourceImage',
+        'source', 'Source', 'file', 'File', 'fileName', 'filename', 'FileName',
+        'document', 'Document', 'doc', 'Doc', 'image', 'Image', 'page', 'Page'
+    ];
+
+    for (const key of candidateKeys) {
+        if (key in item && item[key] !== null && item[key] !== undefined) {
+            const v = isLocatedValue(item[key]) ? item[key].value : item[key];
+            if (typeof v === 'string' && v.trim()) {
+                return v.trim();
+            }
+        }
+    }
+
+    // Dynamic scan: look for any key containing 'source' or 'file' or value ending with image/pdf extension
+    for (const [k, v] of Object.entries(item)) {
+        const val = isLocatedValue(v) ? v.value : v;
+        if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (/\.(jpe?g|png|webp|gif|pdf|bmp|tiff?)$/i.test(trimmed)) {
+                return trimmed;
+            }
+            if (/source|file|document/i.test(k) && trimmed) {
+                return trimmed;
+            }
+        }
+    }
+
+    return fallback;
 }
 
 // Helper: extract highlight info from a LocatedValue
@@ -205,7 +248,7 @@ export function DataTable({
             arr.forEach((item, idx) => {
                 if (!item || typeof item !== 'object') return;
                 const colKeys = Object.keys(item);
-                const itemSource = item.source || item.Source || item.file || item.fileName || item.filename || filename;
+                const itemSource = extractItemSource(item, filename);
                 const displayValue = colKeys.map(ck => getDisplayValue(item[ck])).join(' | ');
 
                 const id = `row_${arrayKey}_${idx}`;
@@ -254,8 +297,24 @@ export function DataTable({
         return initial;
     });
 
+    const [normalizationSettings, setNormalizationSettings] = useState<NormalizationSettings>(() => getStoredNormalizationSettings());
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+    useEffect(() => {
+        const handler = (e: any) => {
+            if (e.detail) {
+                setNormalizationSettings(e.detail);
+            } else {
+                setNormalizationSettings(getStoredNormalizationSettings());
+            }
+        };
+        window.addEventListener('docutrace_settings_changed', handler);
+        return () => window.removeEventListener('docutrace_settings_changed', handler);
+    }, []);
+
     const [isReviewMode, setIsReviewMode] = useState(false);
     const [activeIndex, setActiveIndex] = useState(0);
+    const [reviewColKey, setReviewColKey] = useState<string | null>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editValue, setEditValue] = useState("");
     const [editColumnKey, setEditColumnKey] = useState<string | null>(null);
@@ -264,6 +323,11 @@ export function DataTable({
     const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
     const editInputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // Reset selected review column when moving to another item
+    useEffect(() => {
+        setReviewColKey(null);
+    }, [activeIndex]);
 
     // Keep ref updated
     useEffect(() => {
@@ -676,7 +740,7 @@ export function DataTable({
                                 const vItem = verificationItems.find(v => v.id === itemId);
                                 const isActive = isReviewMode && verificationItems[activeIndex]?.id === itemId;
                                 const isRowEditing = editingId === itemId;
-                                const itemSource = item.source || item.Source || item.file || item.fileName || item.filename || filename;
+                                const itemSource = extractItemSource(item, filename);
 
                                 return (
                                     <tr
@@ -709,15 +773,13 @@ export function DataTable({
                                             const cellHighlight = getHighlight(raw, `${formatLabel(key)} #${idx + 1} → ${formatLabel(colKey)}`, itemSource, colKey);
                                             const isThisCellEditing = isRowEditing && editColumnKey === colKey;
 
-                                            const isDate = /date/i.test(colKey);
-                                            const dateParsed = isDate ? parseDocDate(val) : null;
-                                            const displayStr = dateParsed?.isValid ? dateParsed.display : val;
+                                            const displayStr = normalizeValue(val, colKey, normalizationSettings);
 
                                             return (
                                                 <td
                                                     key={colKey}
                                                     className={`p-2.5 truncate max-w-0 ${cellHighlight ? 'cursor-crosshair' : ''}`}
-                                                    title={dateParsed?.isValid ? `${dateParsed.display} (Исходное: ${val})` : val}
+                                                    title={displayStr !== val ? `${displayStr} (Исходное: ${val})` : val}
                                                     onClick={(e) => {
                                                         if (cellHighlight) {
                                                             e.stopPropagation();
@@ -816,6 +878,16 @@ export function DataTable({
 
                     <div className="flex items-center gap-2">
                         <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setIsSettingsOpen(true)}
+                            className="gap-1.5 h-7 px-2.5 text-xs font-semibold text-muted-foreground hover:text-foreground border-border/70 hover:bg-muted/80 shadow-xs"
+                            title="Настройки нормализации (форматы дат, чисел, AI правила)"
+                        >
+                            <Sliders className="w-3.5 h-3.5 text-primary" />
+                            <span>Форматы</span>
+                        </Button>
+                        <Button
                             size="sm"
                             variant={isReviewMode ? "default" : "outline"}
                             className={`gap-1.5 h-7 text-xs font-semibold transition-all ${isReviewMode
@@ -909,15 +981,14 @@ export function DataTable({
                             </div>
 
                             {(() => {
-                                const activeColKey = activeItem.highlight?.columnKey;
+                                const activeColKey = reviewColKey || activeItem.highlight?.columnKey;
                                 const activeCol = activeItem.columns?.find(c => c.key === activeColKey) || activeItem.columns?.[0];
-                                const isDate = activeCol ? /date/i.test(activeCol.key) : false;
                                 const rawVal = activeCol
                                     ? (activeCol.highlight?.rawValue || activeCol.value)
                                     : (activeItem.highlight?.rawValue || activeItem.value);
                                 const normVal = activeCol
-                                    ? (isDate ? parseDocDate(activeCol.value).display : activeCol.value)
-                                    : (activeItem.editedValue || activeItem.value);
+                                    ? normalizeValue(activeCol.value, activeCol.key, normalizationSettings)
+                                    : (activeItem.editedValue || normalizeValue(activeItem.value, 'text', normalizationSettings));
                                 const currentFieldTitle = activeCol ? formatLabel(activeCol.key) : activeItem.label;
 
                                 return (
@@ -931,7 +1002,7 @@ export function DataTable({
                                                     Поле: {currentFieldTitle}
                                                 </Badge>
                                                 {activeItem.fileName && (
-                                                    <span className="text-muted-foreground font-mono text-[10px] truncate max-w-[120px]" title={activeItem.fileName}>
+                                                    <span className="text-muted-foreground font-mono text-[10px] truncate max-w-[140px]" title={activeItem.fileName}>
                                                         ({activeItem.fileName})
                                                     </span>
                                                 )}
@@ -967,14 +1038,14 @@ export function DataTable({
                                                 </span>
                                                 {activeItem.columns.map(col => {
                                                     const isThisColActive = col.key === activeCol?.key;
-                                                    const colIsDate = /date/i.test(col.key);
-                                                    const colDisplay = colIsDate ? parseDocDate(col.value).display : col.value;
+                                                    const colDisplay = normalizeValue(col.value, col.key, normalizationSettings);
 
                                                     return (
                                                         <button
                                                             key={col.key}
                                                             type="button"
                                                             onClick={() => {
+                                                                setReviewColKey(col.key);
                                                                 if (col.highlight) {
                                                                     setActiveHighlight(col.highlight);
                                                                 }
@@ -1122,6 +1193,13 @@ export function DataTable({
                     )}
                 </div>
             </div>
+
+            {/* Normalization & AI Rules Settings Modal */}
+            <NormalizationSettingsModal
+                isOpen={isSettingsOpen}
+                onClose={() => setIsSettingsOpen(false)}
+                onApply={(newSettings) => setNormalizationSettings(newSettings)}
+            />
         </div>
     );
 }

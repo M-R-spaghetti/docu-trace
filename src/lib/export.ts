@@ -7,6 +7,7 @@
 import type { DocRow } from "./batchTypes";
 import { FlatRow, explodeDoc, getDisplayValue, isLocatedValue } from "./flatten";
 import { parseDocDate } from "./parseDocDate";
+import { getStoredNormalizationSettings, normalizeValue } from "./normalization";
 
 function extractValue(v: any): string {
     if (v === null || v === undefined) return '';
@@ -21,6 +22,7 @@ function extractValue(v: any): string {
 function extractTableRows(data: any): { headers: string[]; rows: string[][] } {
     if (!data || typeof data !== 'object') return { headers: [], rows: [] };
 
+    const settings = getStoredNormalizationSettings();
     const allKeys = Object.keys(data).filter(k => k !== 'markdown_text');
 
     const primitiveKeys = allKeys.filter(k => !Array.isArray(data[k]) || isLocatedValue(data[k]));
@@ -45,15 +47,15 @@ function extractTableRows(data: any): { headers: string[]; rows: string[][] } {
 
             arr.forEach(item => {
                 const row = [
-                    ...primitiveKeys.map(k => extractValue(data[k])),
-                    ...colKeys.map(ck => extractValue(item[ck]))
+                    ...primitiveKeys.map(k => normalizeValue(extractValue(data[k]), k, settings)),
+                    ...colKeys.map(ck => normalizeValue(extractValue(item[ck]), ck, settings))
                 ];
                 rows.push(row);
             });
         });
     } else {
         headers = primitiveKeys.map(k => k.replace(/_/g, ' ').replace(/^./, s => s.toUpperCase()));
-        const values = primitiveKeys.map(k => extractValue(data[k]));
+        const values = primitiveKeys.map(k => normalizeValue(extractValue(data[k]), k, settings));
         rows.push(values);
     }
 

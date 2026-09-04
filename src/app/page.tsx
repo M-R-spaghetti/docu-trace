@@ -188,6 +188,7 @@ export default function Home() {
           },
           batchSchema: masterSchema,
           batchRows: initialRows.map(r => ({ ...r, file: undefined })),
+          batchFiles: batchFileObjects,
         };
         saveHistory(initialRecord).then(() => {
           setHistory(prev => [initialRecord, ...prev.filter(h => h.id !== recordId)]);
@@ -567,6 +568,10 @@ export default function Home() {
                       setIsBatchMode(false);
                       setBatchRows([]);
                       setBatchSchema(null);
+                    }
+
+                    if (record.batchFiles && record.batchFiles.length > 0) {
+                      setBatchFileObjects(record.batchFiles);
                     }
 
                     if (record.batchInfo?.fileNames) {

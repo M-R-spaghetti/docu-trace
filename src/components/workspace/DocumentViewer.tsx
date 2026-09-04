@@ -53,9 +53,10 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
         if (!activeHighlight) return;
         if (isBatchMode && batchFiles && batchFiles.length > 0) {
             if (activeHighlight.fileName || activeHighlight.fileId) {
-                const targetName = (activeHighlight.fileName || activeHighlight.fileId || "").toLowerCase();
+                const clean = (s: string) => s.split('/').pop()?.split('\\').pop()?.toLowerCase().trim() || "";
+                const targetName = clean(activeHighlight.fileName || activeHighlight.fileId || "");
                 const idx = batchFiles.findIndex(f => {
-                    const fn = f.name.toLowerCase();
+                    const fn = clean(f.name);
                     return fn === targetName || fn.includes(targetName) || targetName.includes(fn);
                 });
                 if (idx !== -1 && idx + 1 !== currentBatchPage) {
@@ -221,7 +222,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
 
                 setZoomScale(view.scale);
 
-                const timer = setTimeout(() => {
+                const doScroll = () => {
                     if (containerRef.current) {
                         const padOffset = view.scale > 1 ? 24 : 0;
                         containerRef.current.scrollTo({
@@ -230,8 +231,14 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                             behavior: 'smooth'
                         });
                     }
-                }, 60);
-                return () => clearTimeout(timer);
+                };
+
+                const raf = requestAnimationFrame(doScroll);
+                const timer = setTimeout(doScroll, 80);
+                return () => {
+                    cancelAnimationFrame(raf);
+                    clearTimeout(timer);
+                };
             }
         }
     }, [activeHighlight, isSnapped, snappedBox, baseDims]);
@@ -246,9 +253,10 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
 
         // Verify active file matches highlighted item in batch mode
         if (isBatchMode && activeHighlight.fileName && activeFile) {
-            const targetName = activeHighlight.fileName.toLowerCase();
-            const currName = activeFile.name.toLowerCase();
-            if (!currName.includes(targetName) && !targetName.includes(currName)) {
+            const clean = (s: string) => s.split('/').pop()?.split('\\').pop()?.toLowerCase().trim() || '';
+            const targetName = clean(activeHighlight.fileName);
+            const currName = clean(activeFile.name);
+            if (targetName && currName && !currName.includes(targetName) && !targetName.includes(currName)) {
                 return null;
             }
         }
@@ -485,7 +493,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     >
                         {isPdf ? (
                             <div
-                                className="relative inline-block shadow-2xl rounded-lg border bg-white overflow-hidden transition-all duration-200"
+                                className="relative inline-block shadow-2xl rounded-lg border bg-white overflow-hidden"
                                 style={{
                                     width: `${renderedWidth}px`,
                                     height: `${renderedHeight}px`,
@@ -521,7 +529,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                             </div>
                         ) : (
                             <div
-                                className="relative inline-block shadow-2xl rounded-lg border bg-white overflow-hidden transition-all duration-200"
+                                className="relative inline-block shadow-2xl rounded-lg border bg-white overflow-hidden"
                                 style={{
                                     width: `${renderedWidth}px`,
                                     height: `${renderedHeight}px`,
@@ -533,7 +541,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                                     ref={imageRef}
                                     src={objectUrl}
                                     alt="Document Scan"
-                                    className={`w-full h-full object-contain transition-all duration-200 ${
+                                    className={`w-full h-full object-contain transition-opacity duration-150 ${
                                         activeHighlight ? 'brightness-[0.93]' : ''
                                     }`}
                                     onLoad={handleImageLoad}

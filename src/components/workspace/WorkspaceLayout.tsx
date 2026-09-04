@@ -83,9 +83,10 @@ export function WorkspaceLayout({
     const handleSetActiveHighlight = (hl: ActiveHighlight | null) => {
         setActiveHighlight(hl);
         if (hl?.fileName && batchFileObjects && batchFileObjects.length > 0) {
-            const targetName = hl.fileName.toLowerCase();
+            const clean = (s: string) => s.split('/').pop()?.split('\\').pop()?.toLowerCase().trim() || "";
+            const targetName = clean(hl.fileName);
             const found = batchFileObjects.find(f => {
-                const fn = f.name.toLowerCase();
+                const fn = clean(f.name);
                 return fn === targetName || fn.includes(targetName) || targetName.includes(fn);
             });
             if (found && found !== selectedBatchFile) {
