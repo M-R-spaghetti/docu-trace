@@ -5,8 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ActiveHighlight, BoundingBox } from "@/lib/types";
 import { Document, Page, pdfjs } from 'react-pdf';
 import { getPageTextItems, snapToPdfText } from "@/lib/pdfTextSnapper";
+import { computeBoxView } from "@/lib/zoomToBox";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, Receipt, FileText } from "lucide-react";
+import { ChevronLeft, ChevronRight, Receipt, FileText, ZoomIn, ZoomOut, Maximize, RotateCcw } from "lucide-react";
 import 'react-pdf/dist/Page/AnnotationLayer.css';
 import 'react-pdf/dist/Page/TextLayer.css';
 
@@ -25,6 +26,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
     const isBatchMode = Boolean(batchFiles && batchFiles.length > 1);
     const [currentBatchPage, setCurrentBatchPage] = useState(1);
     const [currentPdfPage, setCurrentPdfPage] = useState(1);
+    const [zoomScale, setZoomScale] = useState(1.0);
 
     const [objectUrl, setObjectUrl] = useState<string | null>(null);
     const [isPdf, setIsPdf] = useState(false);
@@ -208,14 +210,46 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
         };
     }, [activeHighlight, isPdf, pdfDocProxy, pageDimensions]);
 
-    // Auto-scroll when highlight changes
+    // Auto-scroll and smart-zoom when highlight changes
     useEffect(() => {
-        if (!activeHighlight) return;
+        if (!activeHighlight) {
+            setZoomScale(1.0);
+            return;
+        }
         const targetPage = isBatchMode ? currentBatchPage : (activeHighlight.page || 1);
         const dims = pageDimensions.get(targetPage);
         const effectiveBox = (isSnapped && snappedBox) ? snappedBox : activeHighlight.box_2d;
 
-        if (imageRef.current && containerRef.current && dims) {
+        if (containerRef.current && dims && effectiveBox && effectiveBox.length === 4) {
+            const [ymin, xmin, ymax, xmax] = effectiveBox;
+            const isZeroBox = ymin === 0 && xmin === 0 && ymax === 0 && xmax === 0;
+
+            if (!isZeroBox && dims.width > 0 && dims.height > 0) {
+                const view = computeBoxView({
+                    containerWidth: containerRef.current.clientWidth,
+                    containerHeight: containerRef.current.clientHeight,
+                    pageWidth: dims.width,
+                    pageHeight: dims.height,
+                    box: effectiveBox,
+                    targetFill: 0.32,
+                    maxScale: 3.5,
+                });
+
+                setZoomScale(view.scale);
+                const timer = setTimeout(() => {
+                    if (containerRef.current) {
+                        containerRef.current.scrollTo({
+                            left: view.scrollLeft,
+                            top: view.scrollTop,
+                            behavior: 'smooth'
+                        });
+                    }
+                }, 50);
+                return () => clearTimeout(timer);
+            }
+        }
+
+        if (imageRef.current && containerRef.current && dims && effectiveBox) {
             const [ymin] = effectiveBox;
             const pixelTop = (ymin / 1000) * dims.height;
             containerRef.current.scrollTo({
@@ -383,10 +417,52 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
             {/* Document / Receipt Canvas Container */}
             <div
                 ref={containerRef}
-                className="w-full flex-1 overflow-y-auto p-4 flex flex-col items-center justify-start"
+                className="w-full flex-1 overflow-auto p-4 flex flex-col items-center justify-start relative"
             >
+                {/* Floating Zoom Control Pill */}
+                <div className="sticky top-2 ml-auto z-40 flex items-center gap-1 bg-background/85 backdrop-blur-md border px-2 py-1 rounded-full shadow-md text-xs mb-2">
+                    <button
+                        type="button"
+                        onClick={() => setZoomScale(s => Math.max(0.5, Number((s - 0.25).toFixed(2))))}
+                        className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors"
+                        title="Уменьшить (-)"
+                    >
+                        <ZoomOut className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="font-mono text-[11px] font-semibold px-1 min-w-[42px] text-center">
+                        {Math.round(zoomScale * 100)}%
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setZoomScale(s => Math.min(4.0, Number((s + 0.25).toFixed(2))))}
+                        className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors"
+                        title="Увеличить (+)"
+                    >
+                        <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+                    {zoomScale !== 1 && (
+                        <button
+                            type="button"
+                            onClick={() => setZoomScale(1.0)}
+                            className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors ml-0.5 border-l pl-1.5"
+                            title="Сбросить масштаб (100%)"
+                        >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
+
                 {isPdf ? (
-                    <div className="shadow-xl bg-white rounded-lg border overflow-hidden flex flex-col items-center justify-center">
+                    <div
+                        className="shadow-xl bg-white rounded-lg border overflow-hidden flex flex-col items-center justify-center transition-transform duration-300 origin-top-left"
+                        style={{
+                            transform: `scale(${zoomScale})`,
+                            ...(zoomScale > 1 ? {
+                                marginBottom: `${(pageDimensions.get(currentPdfPage)?.height || 600) * (zoomScale - 1)}px`,
+                                marginRight: `${(pageDimensions.get(currentPdfPage)?.width || 600) * (zoomScale - 1)}px`,
+                            } : {})
+                        }}
+                    >
                         <Document
                             file={objectUrl}
                             className="flex flex-col items-center justify-center"
@@ -410,7 +486,16 @@ export function DocumentViewer({ file, activeHighlight, batchFiles }: DocumentVi
                     </div>
                 ) : (
                     <div className="flex justify-center w-full relative">
-                        <div className="relative inline-block">
+                        <div
+                            className="relative inline-block transition-transform duration-300 origin-top-left"
+                            style={{
+                                transform: `scale(${zoomScale})`,
+                                ...(zoomScale > 1 ? {
+                                    marginBottom: `${(pageDimensions.get(isBatchMode ? currentBatchPage : 1)?.height || 600) * (zoomScale - 1)}px`,
+                                    marginRight: `${(pageDimensions.get(isBatchMode ? currentBatchPage : 1)?.width || 400) * (zoomScale - 1)}px`,
+                                } : {})
+                            }}
+                        >
                             <img
                                 ref={imageRef}
                                 src={objectUrl}

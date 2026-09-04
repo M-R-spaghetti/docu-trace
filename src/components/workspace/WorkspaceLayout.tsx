@@ -60,7 +60,19 @@ export function WorkspaceLayout({
     const [isFloating, setIsFloating] = useState(false);
     const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
     const [filesFilter, setFilesFilter] = useState("");
-    const [sidebarWidth, setSidebarWidth] = useState(isBatchMode ? 650 : 450); // px
+    const [sidebarWidth, setSidebarWidth] = useState(() => {
+        if (typeof window !== "undefined") {
+            return isBatchMode ? Math.max(680, Math.round(window.innerWidth * 0.58)) : 450;
+        }
+        return isBatchMode ? 680 : 450;
+    });
+
+    // Auto-expand sidebar when batch mode activates
+    useEffect(() => {
+        if (isBatchMode && typeof window !== "undefined") {
+            setSidebarWidth(prev => Math.max(prev, Math.max(680, Math.round(window.innerWidth * 0.58))));
+        }
+    }, [isBatchMode]);
 
     useEffect(() => {
         if (isBatchMode && batchRows && batchRows.length > 0 && !selectedBatchRowId) {
@@ -80,7 +92,8 @@ export function WorkspaceLayout({
         const onPointerMove = (e: PointerEvent) => {
             if (!isDragging.current) return;
             const newWidth = document.body.clientWidth - e.clientX - 32;
-            if (newWidth > 300 && newWidth < 800) {
+            const maxW = Math.max(800, window.innerWidth - 320);
+            if (newWidth > 350 && newWidth < maxW) {
                 setSidebarWidth(newWidth);
             }
         };
@@ -421,6 +434,31 @@ export function WorkspaceLayout({
                                             };
                                         }
                                         return r;
+                                    });
+                                    onBatchRowsChange(updated);
+                                }}
+                                onBulkConfirmRows={(targetFlatRows) => {
+                                    if (!onBatchRowsChange || !batchRows) return;
+                                    const targetSet = new Set(targetFlatRows.map(fr => `${fr.fileId}-${fr.rowIndex}`));
+                                    const updated = batchRows.map(r => {
+                                        const flatList = explodeDoc(r.fileId, r.fileName, r.data, r.file, r.status, r.error);
+                                        const matching = flatList.filter((fr, idx) => targetSet.has(`${fr.fileId}-${idx}`));
+                                        if (matching.length === 0) return r;
+
+                                        const newReviews = { ...r.reviews };
+                                        for (const fr of matching) {
+                                            for (const cell of Object.values(fr.cells)) {
+                                                const curr = newReviews[cell.path] || { auto: "ok", reasons: [], human: "unreviewed" };
+                                                if (curr.human === "unreviewed") {
+                                                    newReviews[cell.path] = {
+                                                        ...curr,
+                                                        human: "bulk_confirmed",
+                                                        reviewedAt: Date.now(),
+                                                    };
+                                                }
+                                            }
+                                        }
+                                        return { ...r, reviews: newReviews };
                                     });
                                     onBatchRowsChange(updated);
                                 }}

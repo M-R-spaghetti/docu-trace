@@ -1,7 +1,8 @@
 import { isLocatedValue, getDisplayValue, walkLeaves } from "./flatten";
+import { parseDocDate } from "./parseDocDate";
 
 export type AutoCheck = "ok" | "warn" | "error";
-export type HumanReview = "unreviewed" | "confirmed" | "corrected";
+export type HumanReview = "unreviewed" | "confirmed" | "corrected" | "bulk_confirmed";
 
 export interface CellReview {
     auto: AutoCheck;
@@ -161,20 +162,22 @@ export function checkCell(
 
     // 4. Date checks
     if (/date/.test(key)) {
-        const dateRes = normalizeDate(disp);
-        if (!dateRes.parsedDate) {
-            reasons.push("дата не распознана");
-        } else {
-            const time = dateRes.parsedDate.getTime();
-            // Up to 1 day into future allowed for timezone differences
-            if (time > Date.now() + 86400000) {
-                reasons.push("дата в будущем");
-            } else if (time < Date.parse("2000-01-01")) {
-                reasons.push("дата раньше 2000 года");
+        const dateRes = parseDocDate(disp);
+        if (!dateRes.isValid) {
+            reasons.push(dateRes.reason || "дата не распознана");
+        } else if (dateRes.iso) {
+            const time = Date.parse(dateRes.iso);
+            if (!isNaN(time)) {
+                // Up to 1 day into future allowed for timezone differences
+                if (time > Date.now() + 86400000) {
+                    reasons.push("дата в будущем");
+                } else if (time < Date.parse("2000-01-01")) {
+                    reasons.push("дата раньше 2000 года");
+                }
             }
 
             if (dateRes.isAmbiguous) {
-                reasons.push(`неоднозначный формат даты (возможно ${dateRes.ambiguousAlternative})`);
+                reasons.push(dateRes.reason || `неоднозначный формат даты (возможно ${dateRes.ambiguousAlternative})`);
             }
         }
     }

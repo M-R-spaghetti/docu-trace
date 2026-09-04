@@ -6,6 +6,7 @@
 
 import type { DocRow } from "./batchTypes";
 import { FlatRow, explodeDoc, getDisplayValue, isLocatedValue } from "./flatten";
+import { parseDocDate } from "./parseDocDate";
 
 function extractValue(v: any): string {
     if (v === null || v === undefined) return '';
@@ -252,7 +253,12 @@ export function compileBatchExportData(
         const posStr = fr.totalItemsInDoc > 1 ? `${fr.rowIndex + 1} of ${fr.totalItemsInDoc}` : "1";
         const vals = colKeys.map(k => {
             const cell = fr.cells[k];
-            return cell ? getDisplayValue(cell.node) : "";
+            if (!cell) return "";
+            if (/date/i.test(k)) {
+                const parsed = parseDocDate(cell.node);
+                if (parsed.isValid && parsed.iso) return parsed.iso;
+            }
+            return getDisplayValue(cell.node);
         });
 
         // Audit Trail Columns
@@ -278,6 +284,8 @@ export function compileBatchExportData(
                     if (humanStatus !== "Исправлено") humanStatus = "Подтверждено";
                 } else if (rev.human === "corrected") {
                     humanStatus = "Исправлено";
+                } else if (rev.human === "bulk_confirmed") {
+                    if (humanStatus === "Не проверено") humanStatus = "Массово подтверждено";
                 }
 
                 if (rev.reviewedAt && (!latestReviewTime || rev.reviewedAt > latestReviewTime)) {
