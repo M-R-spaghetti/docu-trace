@@ -141,6 +141,15 @@ export function checkCell(
         const [ymin, xmin, ymax, xmax] = node.box_2d;
         if (ymin === 0 && xmin === 0 && ymax === 0 && xmax === 0) {
             reasons.push("нулевые координаты");
+        } else {
+            const width = Math.abs(xmax - xmin);
+            const height = Math.abs(ymax - ymin);
+            const outOfBounds = [ymin, xmin, ymax, xmax].some(v => typeof v !== "number" || v < 0 || v > 1000);
+            if (outOfBounds || xmax <= xmin || ymax <= ymin) {
+                reasons.push("некорректные координаты области");
+            } else if (height > 180 || (/date/.test(key) && width > 320)) {
+                reasons.push("область подсветки выглядит слишком большой");
+            }
         }
     }
 

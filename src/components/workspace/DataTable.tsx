@@ -103,6 +103,19 @@ function extractItemSource(item: any, fallback?: string): string | undefined {
 // Helper: extract highlight info from a LocatedValue
 function getHighlight(v: any, label?: string, fileName?: string, columnKey?: string): ActiveHighlight | null {
     if (!isLocatedValue(v)) return null;
+    const [ymin, xmin, ymax, xmax] = v.box_2d;
+    const coords = [ymin, xmin, ymax, xmax];
+    const width = xmax - xmin;
+    const height = ymax - ymin;
+    const textLength = String(v.value ?? '').trim().length;
+    const maxExpectedWidth = Math.min(420, Math.max(130, textLength * 22));
+
+    // An unreliable box must not confidently send the reviewer to empty space.
+    if (
+        coords.some(n => typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 1000) ||
+        width <= 0 || height <= 0 || height > 180 || width > maxExpectedWidth
+    ) return null;
+
     return {
         box_2d: v.box_2d,
         page: v.page || 1,
@@ -863,9 +876,9 @@ export function DataTable({
     return (
         <div ref={containerRef} className="flex flex-col h-full bg-background border rounded-xl overflow-hidden shadow-sm">
             {/* Header with progress */}
-            <div className="p-3 pr-14 border-b bg-muted/20 space-y-2.5 flex-none">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+            <div className="p-3 pr-12 border-b bg-muted/20 space-y-2.5 flex-none">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                         <h3 className="font-semibold text-sm flex items-center gap-2">
                             Извлечённые данные
                         </h3>
@@ -876,7 +889,7 @@ export function DataTable({
                         )}
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
                         <Button
                             variant="outline"
                             size="sm"
@@ -885,7 +898,7 @@ export function DataTable({
                             title="Настройки нормализации (форматы дат, чисел, AI правила)"
                         >
                             <Sliders className="w-3.5 h-3.5 text-primary" />
-                            <span>Форматы</span>
+                            <span className="hidden min-[520px]:inline">Форматы</span>
                         </Button>
                         <Button
                             size="sm"
@@ -905,9 +918,9 @@ export function DataTable({
                             }}
                         >
                             {isReviewMode ? (
-                                <><Keyboard className="w-3.5 h-3.5" /> Режим проверки активен</>
+                                <><Keyboard className="w-3.5 h-3.5" /> <span className="hidden min-[560px]:inline">Режим проверки </span>активен</>
                             ) : (
-                                <><Play className="w-3.5 h-3.5" /> Начать проверку</>
+                                <><Play className="w-3.5 h-3.5" /> Проверить</>
                             )}
                         </Button>
                     </div>
@@ -942,14 +955,14 @@ export function DataTable({
                     {/* Focused Review Card Mode */}
                     {isReviewMode && activeItem && (
                         <div className="p-3 bg-card border-2 border-primary/40 rounded-xl shadow-md space-y-3 bg-gradient-to-b from-primary/5 to-transparent">
-                            <div className="flex items-center justify-between">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div className="flex items-center gap-2">
                                     <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                                     <span className="text-xs font-bold uppercase tracking-wider text-primary">
                                         Проверка ({activeIndex + 1} из {verificationItems.length})
                                     </span>
                                 </div>
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-0.5 ml-auto">
                                     <Button
                                         variant="ghost"
                                         size="sm"
@@ -957,7 +970,7 @@ export function DataTable({
                                         onClick={() => setActiveIndex(p => Math.max(0, p - 1))}
                                         disabled={activeIndex <= 0}
                                     >
-                                        <ChevronLeft className="w-3.5 h-3.5 mr-0.5" /> Назад
+                                        <ChevronLeft className="w-3.5 h-3.5" /> <span className="hidden min-[520px]:inline">Назад</span>
                                     </Button>
                                     <Button
                                         variant="ghost"
@@ -966,7 +979,7 @@ export function DataTable({
                                         onClick={() => setActiveIndex(p => Math.min(verificationItems.length - 1, p + 1))}
                                         disabled={activeIndex >= verificationItems.length - 1}
                                     >
-                                        Вперёд <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
+                                        <span className="hidden min-[520px]:inline">Вперёд</span> <ChevronRight className="w-3.5 h-3.5" />
                                     </Button>
                                     <Button
                                         variant="ghost"
@@ -1011,7 +1024,7 @@ export function DataTable({
                                         </div>
 
                                         {/* Raw vs Normalized Comparison */}
-                                        <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                                        <div className="grid grid-cols-1 min-[480px]:grid-cols-2 gap-2 text-xs pt-1">
                                             <div className="p-2.5 bg-muted/40 rounded-lg border">
                                                 <span className="text-[10px] uppercase font-bold text-muted-foreground block mb-1">
                                                     В чеке (Raw OCR)
@@ -1127,9 +1140,9 @@ export function DataTable({
             {/* Sticky bottom actions */}
             <div className="p-3 border-t bg-muted/15 flex-none space-y-2">
                 {/* Export Format Selector */}
-                <div className="flex items-center justify-between gap-2 px-0.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 px-0.5">
                     <span className="text-xs text-muted-foreground font-medium">Формат экспорта:</span>
-                    <div className="flex bg-muted/60 p-0.5 rounded-lg text-xs">
+                    <div className="flex flex-wrap bg-muted/60 p-0.5 rounded-lg text-xs">
                         <button
                             type="button"
                             className={`px-2 py-0.5 rounded-md transition-all font-medium flex items-center gap-1 text-xs ${
@@ -1169,14 +1182,15 @@ export function DataTable({
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     <Button
                         className="flex-1 gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white shadow-md shadow-emerald-500/20 border-0 h-9 text-xs font-semibold"
                         size="default"
                         onClick={handleExport}
                     >
                         <Download className="w-4 h-4" />
-                        <span>Экспорт {exportFormat.toUpperCase()} ({stats.done}/{stats.total} проверено)</span>
+                        <span>Экспорт {exportFormat.toUpperCase()}</span>
+                        <span className="hidden min-[540px]:inline">({stats.done}/{stats.total} проверено)</span>
                     </Button>
 
                     {stats.done < stats.total && (

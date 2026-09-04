@@ -38,7 +38,6 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     const [imageError, setImageError] = useState(false);
 
     // Natural & base dimensions
-    const [naturalDims, setNaturalDims] = useState<{ width: number; height: number }>({ width: 800, height: 1100 });
     const [baseDims, setBaseDims] = useState<{ width: number; height: number }>({ width: 700, height: 950 });
 
     const imageRef = useRef<HTMLImageElement | null>(null);
@@ -61,8 +60,10 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 });
                 if (idx !== -1 && idx + 1 !== currentBatchPage) {
                     setCurrentBatchPage(idx + 1);
-                    return;
                 }
+                // `page` is the page inside this document, not an index in the
+                // batch. Once a file identifier exists, never use it as fallback.
+                return;
             }
             if (activeHighlight.page && activeHighlight.page !== currentBatchPage) {
                 const page = Math.max(1, Math.min(activeHighlight.page, batchFiles.length));
@@ -77,12 +78,27 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     // Sync file prop changes to currentBatchPage
     useEffect(() => {
         if (isBatchMode && batchFiles && file) {
-            const idx = batchFiles.findIndex(f => f.name === file.name);
+            const clean = (s: string) => s.split('/').pop()?.split('\\').pop()?.toLowerCase().trim() || "";
+            const currFileName = clean(file.name);
+            const idx = batchFiles.findIndex(f => {
+                const fn = clean(f.name);
+                return fn === currFileName || fn.includes(currFileName) || currFileName.includes(fn);
+            });
             if (idx !== -1 && idx + 1 !== currentBatchPage) {
+                if (activeHighlight?.fileName) {
+                    const targetHL = clean(activeHighlight.fileName);
+                    const hlIdx = batchFiles.findIndex(f => {
+                        const fn = clean(f.name);
+                        return fn === targetHL || fn.includes(targetHL) || targetHL.includes(fn);
+                    });
+                    if (hlIdx !== -1 && hlIdx !== idx) {
+                        return; // Let activeHighlight effect handle switching
+                    }
+                }
                 setCurrentBatchPage(idx + 1);
             }
         }
-    }, [file, isBatchMode, batchFiles, currentBatchPage]);
+    }, [file, isBatchMode, batchFiles, currentBatchPage, activeHighlight]);
 
     // Generate Object URL for the active file
     useEffect(() => {
@@ -107,7 +123,6 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
 
     // Calculate base dimensions fitting within viewport container
     const updateBaseDimensions = useCallback((natW: number, natH: number) => {
-        setNaturalDims({ width: natW, height: natH });
         const container = containerRef.current;
         const contW = container ? Math.max(320, container.clientWidth - 48) : 750;
         const contH = container ? Math.max(400, container.clientHeight - 64) : 950;
@@ -118,12 +133,15 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
 
         const bw = Math.round(natW * fitScale);
         const bh = Math.round(natH * fitScale);
-        setBaseDims({ width: bw, height: bh });
+        setBaseDims(prev => prev.width === bw && prev.height === bh
+            ? prev
+            : { width: bw, height: bh }
+        );
     }, []);
 
     // Handle Image Load
     const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-        setImageError(false);
+        if (imageError) setImageError(false);
         const img = e.currentTarget;
         const nw = img.naturalWidth || 800;
         const nh = img.naturalHeight || 1100;
@@ -224,7 +242,9 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
 
                 const doScroll = () => {
                     if (containerRef.current) {
-                        const padOffset = view.scale > 1 ? 24 : 0;
+                        // The zoom toolbar is sticky and does not belong to the page coordinate
+                        // system. Only compensate for the canvas padding around the page.
+                        const padOffset = view.scale > 1 ? 24 : 16;
                         containerRef.current.scrollTo({
                             left: view.scrollLeft + padOffset,
                             top: view.scrollTop + padOffset,
@@ -251,8 +271,8 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     const renderHighlightOverlay = () => {
         if (!activeHighlight) return null;
 
-        // Verify active file matches highlighted item in batch mode
-        if (isBatchMode && activeHighlight.fileName && activeFile) {
+        // Verify active file matches highlighted item (never draw highlight from another file!)
+        if (activeHighlight.fileName && activeFile) {
             const clean = (s: string) => s.split('/').pop()?.split('\\').pop()?.toLowerCase().trim() || '';
             const targetName = clean(activeHighlight.fileName);
             const currName = clean(activeFile.name);
@@ -421,8 +441,26 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 ref={containerRef}
                 className="w-full flex-1 overflow-auto relative bg-zinc-900/10 dark:bg-zinc-950/50"
             >
+                {/* Mismatch indicator if highlight points to another document */}
+                {(() => {
+                    if (!activeHighlight?.fileName || !activeFile) return null;
+                    const clean = (s: string) => s.split('/').pop()?.split('\\').pop()?.toLowerCase().trim() || '';
+                    const targetName = clean(activeHighlight.fileName);
+                    const currName = clean(activeFile.name);
+                    if (!targetName || !currName || currName.includes(targetName) || targetName.includes(currName)) return null;
+
+                    return (
+                        <div className="absolute top-3 left-3 z-40 flex items-center gap-1.5 bg-amber-500/95 text-amber-950 px-3 py-1 rounded-full shadow-md text-xs font-semibold backdrop-blur-xs animate-in fade-in">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-950" />
+                            <span>
+                                Позиция из чека <strong>{activeHighlight.fileName}</strong> (открыт {activeFile.name})
+                            </span>
+                        </div>
+                    );
+                })()}
+
                 {/* Floating Zoom Control Pill */}
-                <div className="sticky top-2 ml-auto z-40 flex items-center gap-1 bg-background/85 backdrop-blur-md border px-2 py-1 rounded-full shadow-md text-xs mb-2 mr-3 w-fit">
+                <div className="absolute top-3 right-3 z-40 flex items-center gap-1 bg-background/90 backdrop-blur-md border px-2 py-1 rounded-full shadow-md text-xs w-fit">
                     <button
                         type="button"
                         onClick={() => setZoomScale(s => Math.max(0.6, Number((s - 0.25).toFixed(2))))}

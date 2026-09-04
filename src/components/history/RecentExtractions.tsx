@@ -159,12 +159,36 @@ export function RecentExtractions({
                 title = primaryRecord.file?.name || "Документ";
             }
 
+            // Collect all File objects available in this session
+            const allFilesFromRecords = sessionRecords
+                .map(r => r.file)
+                .filter(Boolean) as File[];
+
+            const combinedBatchFilesMap = new Map<string, File>();
+            if (primaryRecord.batchFiles) {
+                primaryRecord.batchFiles.forEach(f => {
+                    if (f && f.name) combinedBatchFilesMap.set(f.name, f);
+                });
+            }
+            allFilesFromRecords.forEach(f => {
+                if (f && f.name && !combinedBatchFilesMap.has(f.name)) {
+                    combinedBatchFilesMap.set(f.name, f);
+                }
+            });
+            const sessionBatchFiles = Array.from(combinedBatchFilesMap.values());
+
             result.push({
                 sessionId,
                 recordIds,
                 primaryRecord: {
                     ...primaryRecord,
                     extractedData: mergedData,
+                    batchFiles: sessionBatchFiles.length > 0 ? sessionBatchFiles : primaryRecord.batchFiles,
+                    batchInfo: {
+                        totalFiles: fileCount,
+                        fileNames: fileNames,
+                        fileSizes: sessionRecords.map(r => r.file?.size || 0),
+                    },
                 },
                 allRecords: sessionRecords,
                 isBatch: isBatch && fileCount > 1,

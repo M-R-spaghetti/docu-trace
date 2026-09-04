@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { Fragment, useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { DocRow, CellReview, AutoCheck, HumanReview, FlatRow } from "@/lib/batchTypes";
 import { ActiveHighlight } from "@/lib/types";
 import { explodeDoc, getDisplayValue, isLocatedValue } from "@/lib/flatten";
@@ -332,8 +332,35 @@ export function BatchDataTable({
         return [...issueItems, ...sampledOkItems];
     }, [flatRows, columns, docMap]);
 
-    // Current queue item
-    const currentQueueItem = queueItems[queueIndex] || null;
+    type QueueItem = (typeof queueItems)[number];
+    const queueItemKey = useCallback((item: QueueItem) => `${item.fileId}::${item.path}`, []);
+    const [reviewQueue, setReviewQueue] = useState<QueueItem[]>([]);
+
+    // Keep the active review queue append-only. Existing entries retain their
+    // position while freshly processed fields are appended at the end.
+    useEffect(() => {
+        if (!isReviewMode) return;
+        setReviewQueue(previous => {
+            const latestByKey = new Map(queueItems.map(item => [queueItemKey(item), item]));
+            const known = new Set(previous.map(queueItemKey));
+            const refreshed = previous.map(item => latestByKey.get(queueItemKey(item)) || item);
+            let sampleSlots = Math.max(0, 10 - refreshed.filter(item => item.isSample).length);
+            const additions = queueItems.filter(item => {
+                if (known.has(queueItemKey(item))) return false;
+                if (!item.isSample) return true;
+                if (sampleSlots <= 0) return false;
+                sampleSlots--;
+                return true;
+            });
+            if (additions.length === 0 && refreshed.every((item, index) => item === previous[index])) {
+                return previous;
+            }
+            return [...refreshed, ...additions];
+        });
+    }, [isReviewMode, queueItems, queueItemKey]);
+
+    // Current queue item is stable even while extraction adds more rows.
+    const currentQueueItem = reviewQueue[queueIndex] || null;
 
     // Focus document viewer to current queue item with auto-zoom
     const focusQueueItem = useCallback((item: typeof currentQueueItem) => {
@@ -389,10 +416,10 @@ export function BatchDataTable({
             onToggleVerifyCell(currentQueueItem.fileId, currentQueueItem.path);
         }
 
-        if (queueIndex < queueItems.length - 1) {
+        if (queueIndex < reviewQueue.length - 1) {
             setQueueIndex(i => i + 1);
         }
-    }, [currentQueueItem, docMap, queueIndex, queueItems.length, onConfirmCell, onToggleVerifyCell]);
+    }, [currentQueueItem, docMap, queueIndex, reviewQueue.length, onConfirmCell, onToggleVerifyCell]);
 
     // Review Actions: Undo last approval
     const handleUndo = useCallback(() => {
@@ -413,10 +440,10 @@ export function BatchDataTable({
 
     // Review Actions: Skip / Flag
     const handleSkip = useCallback(() => {
-        if (queueIndex < queueItems.length - 1) {
+        if (queueIndex < reviewQueue.length - 1) {
             setQueueIndex(i => i + 1);
         }
-    }, [queueIndex, queueItems.length]);
+    }, [queueIndex, reviewQueue.length]);
 
     // Global keyboard shortcuts in Review Mode
     useEffect(() => {
@@ -449,7 +476,7 @@ export function BatchDataTable({
                         onUpdateCell(currentQueueItem.fileId, currentQueueItem.path, queueEditValue);
                     }
                     setIsEditingInQueue(false);
-                    if (queueIndex < queueItems.length - 1) setQueueIndex(i => i + 1);
+                    if (queueIndex < reviewQueue.length - 1) setQueueIndex(i => i + 1);
                 } else if (e.key === "Escape") {
                     e.preventDefault();
                     setIsEditingInQueue(false);
@@ -480,20 +507,20 @@ export function BatchDataTable({
                 if (currentQueueItem && onConfirmRow) {
                     onConfirmRow(currentQueueItem.fileId, currentQueueItem.rowIndex);
                 }
-                const nextIdx = queueItems.findIndex((it, idx) => idx > queueIndex && (it.fileId !== currentQueueItem?.fileId || it.rowIndex !== currentQueueItem?.rowIndex));
+                const nextIdx = reviewQueue.findIndex((it, idx) => idx > queueIndex && (it.fileId !== currentQueueItem?.fileId || it.rowIndex !== currentQueueItem?.rowIndex));
                 if (nextIdx !== -1) setQueueIndex(nextIdx);
-                else if (queueIndex < queueItems.length - 1) setQueueIndex(i => i + 1);
+                else if (queueIndex < reviewQueue.length - 1) setQueueIndex(i => i + 1);
             } else if (e.key === "a" || e.key === "A") {
                 e.preventDefault();
                 if (currentQueueItem && onConfirmDoc) {
                     onConfirmDoc(currentQueueItem.fileId);
                 }
-                const nextIdx = queueItems.findIndex((it, idx) => idx > queueIndex && it.fileId !== currentQueueItem?.fileId);
+                const nextIdx = reviewQueue.findIndex((it, idx) => idx > queueIndex && it.fileId !== currentQueueItem?.fileId);
                 if (nextIdx !== -1) setQueueIndex(nextIdx);
-                else if (queueIndex < queueItems.length - 1) setQueueIndex(i => i + 1);
+                else if (queueIndex < reviewQueue.length - 1) setQueueIndex(i => i + 1);
             } else if (e.key === "ArrowDown" || e.key === "j" || e.key === "J") {
                 e.preventDefault();
-                if (queueIndex < queueItems.length - 1) setQueueIndex(i => i + 1);
+                if (queueIndex < reviewQueue.length - 1) setQueueIndex(i => i + 1);
             } else if (e.key === "ArrowUp" || e.key === "k" || e.key === "K") {
                 e.preventDefault();
                 if (queueIndex > 0) setQueueIndex(i => i - 1);
@@ -507,7 +534,7 @@ export function BatchDataTable({
         isEditingInQueue,
         currentQueueItem,
         queueIndex,
-        queueItems,
+        reviewQueue,
         queueEditValue,
         handleConfirmCurrent,
         handleUndo,
@@ -599,12 +626,12 @@ export function BatchDataTable({
     return (
         <div className="w-full h-full flex flex-col bg-card border rounded-xl overflow-hidden shadow-sm">
             {/* Header & Metrics */}
-            <div className="p-3 border-b bg-muted/20 space-y-2.5 shrink-0">
-                <div className="flex items-center justify-between gap-3">
+            <div className="p-3.5 pr-12 border-b bg-muted/20 space-y-3 shrink-0">
+                <div className="flex items-center gap-2 min-w-0">
                     <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-sm sm:text-base tracking-tight text-foreground truncate">
-                                Пакетная ведомость чеков
+                            <h3 className="font-bold text-base tracking-tight text-foreground truncate">
+                                Проверка данных
                             </h3>
                             <Badge variant="secondary" className="font-mono text-xs shrink-0">
                                 {flatRows.length} поз. ({rows.length} чеков)
@@ -616,9 +643,11 @@ export function BatchDataTable({
                             )}
                         </div>
                     </div>
+                </div>
 
-                    {/* Actions: Retry, Review Mode Toggle, Export */}
-                    <div className="flex items-center gap-1.5 shrink-0">
+                {/* Primary actions have their own row so they never collide with panel controls. */}
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
                         {stats.failedDocs > 0 && onRetryFailed && (
                             <Button
                                 variant="destructive"
@@ -636,10 +665,12 @@ export function BatchDataTable({
                             size="sm"
                             variant={isReviewMode ? "default" : stats.autoIssuesCount > 0 ? "default" : "outline"}
                             onClick={() => {
-                                setIsReviewMode(!isReviewMode);
+                                const nextMode = !isReviewMode;
+                                setIsReviewMode(nextMode);
                                 setQueueIndex(0);
+                                if (nextMode) setReviewQueue(queueItems);
                             }}
-                            className={`h-8 gap-1.5 text-xs font-semibold shadow-xs ${
+                            className={`h-9 min-w-0 flex-1 gap-1.5 text-sm font-semibold shadow-xs ${
                                 isReviewMode
                                     ? "bg-primary text-primary-foreground"
                                     : stats.autoIssuesCount > 0
@@ -648,16 +679,19 @@ export function BatchDataTable({
                             }`}
                         >
                             <Keyboard className="w-3.5 h-3.5" />
-                            {isReviewMode ? "Назад к таблице" : `Проверить замечания (${queueItems.length})`}
+                            <span className="truncate">
+                                {isReviewMode ? "Все данные" : `Начать проверку (${queueItems.length})`}
+                            </span>
                         </Button>
+                    </div>
 
-                        {/* Independent Export Split Dropdown */}
-                        <div className="relative">
+                    {/* Independent Export Split Dropdown */}
+                    <div className="relative justify-self-end">
                             <Button
                                 size="sm"
                                 variant="outline"
                                 onClick={() => setIsExportMenuOpen(p => !p)}
-                                className="h-8 gap-1 text-xs font-semibold shadow-xs"
+                                className="h-9 gap-1 text-sm font-semibold shadow-xs"
                             >
                                 <Download className="w-3.5 h-3.5 text-muted-foreground" />
                                 Экспорт
@@ -701,7 +735,6 @@ export function BatchDataTable({
                                     </div>
                                 </>
                             )}
-                        </div>
                     </div>
                 </div>
 
@@ -762,7 +795,7 @@ export function BatchDataTable({
                             <Button
                                 variant={filter === "all" ? "default" : "ghost"}
                                 size="sm"
-                                className="h-6 text-xs px-2"
+                                className="h-8 text-sm px-3"
                                 onClick={() => setFilter("all")}
                             >
                                 Все ({flatRows.length})
@@ -770,7 +803,7 @@ export function BatchDataTable({
                             <Button
                                 variant={filter === "warnings" ? "default" : "ghost"}
                                 size="sm"
-                                className={`h-6 text-xs px-2 gap-1 ${
+                                className={`h-8 text-sm px-3 gap-1 ${
                                     filter === "warnings"
                                         ? ""
                                         : stats.autoIssuesCount > 0
@@ -785,7 +818,7 @@ export function BatchDataTable({
                             <Button
                                 variant={filter === "unreviewed" ? "default" : "ghost"}
                                 size="sm"
-                                className="h-6 text-xs px-2 gap-1 text-muted-foreground"
+                                className="h-8 text-sm px-3 gap-1 text-muted-foreground"
                                 onClick={() => setFilter("unreviewed")}
                             >
                                 <Clock className="w-3 h-3" />
@@ -794,7 +827,7 @@ export function BatchDataTable({
                             <Button
                                 variant={filter === "confirmed" ? "default" : "ghost"}
                                 size="sm"
-                                className="h-6 text-xs px-2 gap-1 text-emerald-600"
+                                className="h-8 text-sm px-3 gap-1 text-emerald-600"
                                 onClick={() => setFilter("confirmed")}
                             >
                                 <CheckCircle2 className="w-3 h-3 text-emerald-500" />
@@ -816,14 +849,14 @@ export function BatchDataTable({
                             )}
                         </div>
 
-                        <div className="relative w-40">
+                        <div className="relative w-52">
                             <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
                             <input
                                 type="text"
                                 placeholder="Поиск по чекам..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                className="w-full h-6 pl-7 pr-2 text-xs bg-muted/40 border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
+                                className="w-full h-8 pl-8 pr-2 text-sm bg-muted/40 border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
                             />
                         </div>
                     </div>
@@ -833,9 +866,9 @@ export function BatchDataTable({
             {/* BODY: Review Card Mode OR Master Table */}
             {isReviewMode ? (
                 /* Focused Review Card Mode */
-                <div className="flex-1 overflow-y-auto p-4 flex flex-col justify-between min-h-0 bg-background/50">
+                <div className="flex-1 overflow-y-auto p-3 flex flex-col justify-between min-h-0 bg-background/50">
                     {currentQueueItem ? (
-                        <div className="max-w-xl mx-auto w-full space-y-4">
+                        <div className="w-full space-y-3">
                             {/* Card Top Navigation & Progress */}
                             <div className="flex items-center justify-between gap-2 pb-2 border-b">
                                 <div className="flex items-center gap-2">
@@ -845,10 +878,11 @@ export function BatchDataTable({
                                         onClick={() => setIsReviewMode(false)}
                                         className="h-7 text-xs px-2 gap-1"
                                     >
-                                        <ArrowLeft className="w-3.5 h-3.5" /> К таблице
+                                        <ArrowLeft className="w-3.5 h-3.5" /> Все данные
                                     </Button>
                                     <Badge variant="outline" className="font-mono text-xs">
-                                        {currentQueueItem.isSample ? "Выборочная проверка" : "Замечание"} {queueIndex + 1} из {queueItems.length}
+                                        Поле {queueIndex + 1} из {reviewQueue.length}
+                                        {isProcessing && <span className="ml-1 text-primary">· новые добавляются</span>}
                                     </Badge>
                                 </div>
 
@@ -867,8 +901,8 @@ export function BatchDataTable({
                                         variant="outline"
                                         size="icon"
                                         className="h-7 w-7 rounded-md"
-                                        disabled={queueIndex >= queueItems.length - 1}
-                                        onClick={() => setQueueIndex(i => Math.min(queueItems.length - 1, i + 1))}
+                                        disabled={queueIndex >= reviewQueue.length - 1}
+                                        onClick={() => setQueueIndex(i => Math.min(reviewQueue.length - 1, i + 1))}
                                         title="Следующее замечание (↓)"
                                     >
                                         <ChevronRight className="w-3.5 h-3.5" />
@@ -887,6 +921,9 @@ export function BatchDataTable({
                                 </div>
                                 <div className="text-base font-bold text-foreground">
                                     {formatHeader(currentQueueItem.colKey)}
+                                    <span className={`ml-2 align-middle text-[10px] uppercase tracking-wide ${currentQueueItem.isSample ? "text-muted-foreground" : "text-amber-600"}`}>
+                                        {currentQueueItem.isSample ? "контрольная выборка" : "требует внимания"}
+                                    </span>
                                 </div>
                             </div>
 
@@ -908,11 +945,11 @@ export function BatchDataTable({
                             )}
 
                             {/* Field Values Comparison */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                            <div className="grid grid-cols-1 min-[540px]:grid-cols-2 gap-2 pt-1">
                                 {/* Raw in document */}
                                 <div className="p-3 rounded-xl border bg-muted/20 space-y-1">
                                     <div className="text-[11px] font-semibold text-muted-foreground uppercase">
-                                        На скане документа
+                                        Извлечено из документа
                                     </div>
                                     <div className="font-mono text-sm font-bold text-foreground break-all">
                                         {currentQueueItem.cellVal}
@@ -931,7 +968,7 @@ export function BatchDataTable({
                                 {/* Normalized & Editable */}
                                 <div className="p-3 rounded-xl border bg-background space-y-1">
                                     <div className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
-                                        <span>Распознано / Итог</span>
+                                        <span>Итоговое значение</span>
                                         <button
                                             type="button"
                                             onClick={() => {
@@ -961,7 +998,7 @@ export function BatchDataTable({
                                                         onUpdateCell(currentQueueItem.fileId, currentQueueItem.path, queueEditValue);
                                                     }
                                                     setIsEditingInQueue(false);
-                                                    if (queueIndex < queueItems.length - 1) setQueueIndex(i => i + 1);
+                                                    if (queueIndex < reviewQueue.length - 1) setQueueIndex(i => i + 1);
                                                 }}
                                             >
                                                 <Check className="w-3.5 h-3.5" />
@@ -1016,17 +1053,23 @@ export function BatchDataTable({
                     ) : (
                         <div className="flex flex-col items-center justify-center h-64 text-center">
                             <CheckCircle2 className="w-12 h-12 text-emerald-500 mb-2" />
-                            <h4 className="font-bold text-base text-foreground">Все замечания проверены!</h4>
+                            <h4 className="font-bold text-base text-foreground">
+                                {isProcessing ? "Ожидаем новые результаты…" : "Все замечания проверены!"}
+                            </h4>
                             <p className="text-xs text-muted-foreground max-w-sm mt-1">
-                                Вы верифицировали все проблемные поля и контрольную выборку.
+                                {isProcessing
+                                    ? "Можно продолжать проверку — готовые поля появятся здесь автоматически."
+                                    : "Вы верифицировали все проблемные поля и контрольную выборку."}
                             </p>
-                            <Button
-                                size="sm"
-                                onClick={() => setIsReviewMode(false)}
-                                className="mt-4 gap-1.5"
-                            >
-                                Вернуться к таблице
-                            </Button>
+                            {!isProcessing && (
+                                <Button
+                                    size="sm"
+                                    onClick={() => setIsReviewMode(false)}
+                                    className="mt-4 gap-1.5"
+                                >
+                                    Вернуться к таблице
+                                </Button>
+                            )}
                         </div>
                     )}
 
@@ -1080,7 +1123,7 @@ export function BatchDataTable({
                             </tr>
                         </thead>
 
-                        <tbody className="divide-y divide-border/60 font-mono">
+                        <tbody className="divide-y divide-border/60">
                             {filteredGroupedDocs.length === 0 ? (
                                 <tr>
                                     <td colSpan={columns.length + 2} className="py-12 text-center text-muted-foreground font-sans">
@@ -1101,7 +1144,7 @@ export function BatchDataTable({
                                     const isDocSelected = doc.fileId === selectedRowId || doc.fileName === selectedRowId;
 
                                     return (
-                                        <tbody key={`doc-${doc.fileId}`} className="border-b-2 border-border/80">
+                                        <Fragment key={`doc-${doc.fileId}`}>
                                             {/* Sticky Group Header Row for Document */}
                                             <tr className="sticky top-[29px] z-10 bg-muted/95 backdrop-blur-xs border-y border-border/70 group/grouphead shadow-2xs">
                                                 <td colSpan={columns.length + 2} className="py-1.5 px-3 font-sans">
@@ -1164,12 +1207,12 @@ export function BatchDataTable({
                                                         }`}
                                                     >
                                                         {/* Row Index */}
-                                                        <td className="py-1.5 px-2 text-center text-muted-foreground text-[10px]">
+                                                        <td className="py-2.5 px-2 text-center text-muted-foreground text-xs tabular-nums">
                                                             {fr.totalItemsInDoc > 1 ? `${fr.rowIndex + 1}` : "•"}
                                                         </td>
 
                                                         {/* Combined 2-Axis Status (72px) */}
-                                                        <td className="py-1.5 px-2 text-center">
+                                                        <td className="py-2.5 px-2 text-center">
                                                             <div className="flex items-center justify-center gap-1.5">
                                                                 {/* Machine auto icon */}
                                                                 {(() => {
@@ -1246,7 +1289,7 @@ export function BatchDataTable({
                                                             return (
                                                                 <td
                                                                     key={col}
-                                                                    className={`py-1 px-2.5 relative group/cell ${alignClass}`}
+                                                                    className={`py-2.5 px-3 relative group/cell ${alignClass}`}
                                                                     onClick={(e) => {
                                                                         e.stopPropagation();
                                                                         onSelectRow(doc);
@@ -1289,7 +1332,7 @@ export function BatchDataTable({
                                                                             )}
 
                                                                             {/* Formatted Value */}
-                                                                            <span className={`truncate text-xs ${isEmpty ? "text-amber-500 italic" : "text-foreground"}`}>
+                                                                            <span className={`truncate text-sm leading-5 ${colType === "money" || colType === "qty" ? "tabular-nums" : ""} ${isEmpty ? "text-amber-500 italic" : "text-foreground"}`}>
                                                                                 {colType === "date" && parsedDate ? (
                                                                                     parsedDate.isAmbiguous ? (
                                                                                         <span className="text-amber-600 font-semibold" title={parsedDate.reason}>
@@ -1354,7 +1397,7 @@ export function BatchDataTable({
                                                     </tr>
                                                 );
                                             })}
-                                        </tbody>
+                                        </Fragment>
                                     );
                                 })
                             )}

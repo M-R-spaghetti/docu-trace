@@ -176,6 +176,9 @@ const EXTRACTOR_PROMPT = `Ты — элитный Forensic Data Auditor с во�
    - Диапазон: от 0 до 1000 (0 = верхний/левый край документа, 1000 = нижний/правый край)
    - Координаты должны ТОЧНО окружать именно то значение, которое ты извлекаешь, а не весь абзац или строку
    - Рамка должна быть максимально плотной (tight bounding box) вокруг текста/элемента
+   - Определяй координаты относительно ПОЛНОГО исходного изображения страницы, не относительно мысленно обрезанного или увеличенного фрагмента
+   - Перед ответом повторно найди извлечённый текст на странице и проверь, что центр box_2d действительно попадает на этот текст
+   - Для коротких значений (дата, цена, количество) запрещено возвращать широкую область строки или пустого пространства
 
 4. НОМЕР СТРАНИЦЫ (page): Для каждого значения укажи номер страницы документа, на которой оно находится. Нумерация начинается с 1. Для изображений (одна страница) — всегда page: 1.
 
@@ -184,6 +187,40 @@ const EXTRACTOR_PROMPT = `Ты — элитный Forensic Data Auditor с во�
 
 Фокусируйся на описаниях полей (descriptions) в JSON-структуре, чтобы точно понимать намерения создателя схемы.
 Если ты понял задачу, приступай к аудиту и верни данные в безупречном JSON формате согласно схеме.`;
+
+function mergeCorrectedCoordinates(original: any, corrected: any): any {
+    if (!original || corrected === null || corrected === undefined) return original;
+
+    if (Array.isArray(original)) {
+        if (!Array.isArray(corrected)) return original;
+        return original.map((item, index) => mergeCorrectedCoordinates(item, corrected[index]));
+    }
+
+    if (typeof original === "object") {
+        if ("value" in original && Array.isArray(original.box_2d)) {
+            const candidate = corrected && typeof corrected === "object" ? corrected.box_2d : null;
+            const valid = Array.isArray(candidate)
+                && candidate.length === 4
+                && candidate.every((n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1000)
+                && candidate[2] > candidate[0]
+                && candidate[3] > candidate[1];
+
+            return valid ? {
+                ...original,
+                box_2d: candidate,
+                page: typeof corrected.page === "number" ? corrected.page : original.page,
+            } : original;
+        }
+
+        const merged: Record<string, any> = { ...original };
+        for (const key of Object.keys(original)) {
+            merged[key] = mergeCorrectedCoordinates(original[key], corrected?.[key]);
+        }
+        return merged;
+    }
+
+    return original;
+}
 
 async function generateContentWithModelFallback(ai: any, requestConfig: any) {
     const candidateModels = [
@@ -388,6 +425,43 @@ export async function POST(req: NextRequest) {
         } catch (e) {
             console.error("Extractor generated invalid JSON:", extractionText);
             throw new Error("Extractor failed to generate valid JSON data.");
+        }
+
+        // A separate grounding pass is intentionally used here. A box can be
+        // numerically valid while pointing to empty space, which cannot be
+        // detected by geometry checks in the browser.
+        try {
+            const groundingPrompt = `Повторно проверь ТОЛЬКО пространственную привязку уже извлечённых данных.
+Найди каждое указанное значение на полном исходном документе и верни ту же JSON-структуру.
+Значения запрещено исправлять, переводить, нормализовать или переставлять.
+Для каждого leaf-объекта измени только box_2d и page.
+box_2d имеет порядок [ymin, xmin, ymax, xmax], диапазон 0..1000 относительно ПОЛНОЙ страницы.
+Рамка должна плотно окружать видимые символы значения. Не используй область строки, колонки или пустого места.
+Если значение встречается несколько раз, выбери вхождение в той же логической строке, что и соседние поля объекта.
+
+ДАННЫЕ ДЛЯ ПОВТОРНОЙ ПРИВЯЗКИ:
+${JSON.stringify(extractionResult)}`;
+
+            const groundingResponse = await generateContentWithModelFallback(ai, {
+                contents: [{
+                    role: "user",
+                    parts: [
+                        { text: groundingPrompt },
+                        { inlineData: { data: base64Data, mimeType } },
+                    ],
+                }],
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: sanitizedSchema,
+                },
+            });
+
+            const corrected = JSON.parse(groundingResponse.text || "{}");
+            extractionResult = mergeCorrectedCoordinates(extractionResult, corrected);
+        } catch (groundingError) {
+            // Extraction remains usable even when the optional coordinate pass
+            // is rate-limited or returns malformed JSON.
+            console.warn("Coordinate grounding pass failed; using first-pass boxes:", groundingError);
         }
 
         return NextResponse.json({

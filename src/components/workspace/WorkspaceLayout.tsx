@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
 import { DocRow, HumanReview } from "@/lib/batchTypes";
 import { setByPath, explodeDoc } from "@/lib/flatten";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
 import { BatchDataTable } from "./BatchDataTable";
-import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, FileText, Search, X } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, FileText, Search, X, Sparkles, ChevronUp, Crosshair, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useSessionContext } from "@/lib/sessionContext";
 
 import { StreamingProgress } from "@/lib/streamingPipeline";
 
@@ -54,6 +55,7 @@ export function WorkspaceLayout({
     schema,
     isProcessingBatch,
 }: WorkspaceLayoutProps) {
+    const { switchToSession } = useSessionContext();
     const isBatchMode = Boolean(batchRows && batchRows.length > 0);
     const [selectedBatchFile, setSelectedBatchFile] = useState<File>(file);
     const [selectedBatchRowId, setSelectedBatchRowId] = useState<string | undefined>(undefined);
@@ -61,12 +63,13 @@ export function WorkspaceLayout({
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isFloating, setIsFloating] = useState(false);
     const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
+    const [isAiOpen, setIsAiOpen] = useState(false);
     const [filesFilter, setFilesFilter] = useState("");
     const [sidebarWidth, setSidebarWidth] = useState(() => {
         if (typeof window !== "undefined") {
-            return isBatchMode ? Math.max(680, Math.round(window.innerWidth * 0.58)) : 450;
+            return isBatchMode ? Math.min(620, Math.max(500, Math.round(window.innerWidth * 0.34))) : 450;
         }
-        return isBatchMode ? 680 : 450;
+        return isBatchMode ? 520 : 450;
     });
 
     useEffect(() => {
@@ -95,10 +98,38 @@ export function WorkspaceLayout({
         }
     };
 
+    const handleSelectBatchRow = useCallback((row: DocRow) => {
+        setSelectedBatchRowId(row.fileId);
+        if (row.file) setSelectedBatchFile(prev => prev === row.file ? prev : row.file);
+        setActiveHighlight(prev => {
+            if (!prev) return null;
+            if (prev.fileId && prev.fileId !== row.fileId) return null;
+            if (prev.fileName && prev.fileName !== row.fileName) return null;
+            return prev;
+        });
+    }, []);
+
+    const handleSelectBatchCell = useCallback((row: DocRow, _colKey: string, hl: ActiveHighlight) => {
+        setSelectedBatchRowId(row.fileId);
+        if (row.file) setSelectedBatchFile(prev => prev === row.file ? prev : row.file);
+        setActiveHighlight(prev => {
+            const unchanged = prev
+                && prev.fileId === hl.fileId
+                && prev.fileName === hl.fileName
+                && prev.columnKey === hl.columnKey
+                && prev.page === hl.page
+                && prev.box_2d.every((value, index) => value === hl.box_2d[index]);
+            return unchanged ? prev : hl;
+        });
+    }, []);
+
     // Auto-expand sidebar when batch mode activates
     useEffect(() => {
         if (isBatchMode && typeof window !== "undefined") {
-            setSidebarWidth(prev => Math.max(prev, Math.max(680, Math.round(window.innerWidth * 0.58))));
+            setSidebarWidth(prev => prev === 450
+                ? Math.min(620, Math.max(500, Math.round(window.innerWidth * 0.34)))
+                : prev
+            );
         }
     }, [isBatchMode]);
 
@@ -120,8 +151,8 @@ export function WorkspaceLayout({
         const onPointerMove = (e: PointerEvent) => {
             if (!isDragging.current) return;
             const newWidth = document.body.clientWidth - e.clientX - 32;
-            const maxW = Math.max(800, window.innerWidth - 320);
-            if (newWidth > 350 && newWidth < maxW) {
+            const maxW = Math.max(620, window.innerWidth * 0.55);
+            if (newWidth > 420 && newWidth < maxW) {
                 setSidebarWidth(newWidth);
             }
         };
@@ -140,6 +171,46 @@ export function WorkspaceLayout({
 
     return (
         <div className="w-full h-[calc(100vh-6rem)] max-w-none flex flex-col relative gap-2 bg-background p-2 rounded-xl">
+            {/* Top Workspace Navigation Bar */}
+            <div className="w-full h-9 px-3 bg-muted/30 border border-border/60 rounded-lg flex items-center justify-between text-xs shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => switchToSession(null)}
+                        className="h-6 px-2 text-xs gap-1.5 font-medium hover:bg-background text-muted-foreground hover:text-foreground transition-colors"
+                        title="Вернуться к окну загрузки (обработка продолжится в фоне)"
+                    >
+                        <ArrowLeft className="w-3.5 h-3.5" />
+                        <span>На главную</span>
+                    </Button>
+                    <div className="h-3.5 w-px bg-border shrink-0" />
+                    <span className="font-semibold text-foreground truncate max-w-sm" title={selectedBatchFile?.name || file.name}>
+                        {selectedBatchFile?.name || file.name}
+                    </span>
+                    {isBatchMode && batchRows && (
+                        <span className="text-[10px] font-mono bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium shrink-0">
+                            {batchRows.filter(r => r.status === 'done').length}/{batchRows.length} готово
+                        </span>
+                    )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                    {batchFiles && batchFiles.length > 1 && (
+                        <Button
+                            variant={isFilesDrawerOpen ? "secondary" : "ghost"}
+                            size="sm"
+                            onClick={() => setIsFilesDrawerOpen(p => !p)}
+                            className="h-6 text-xs gap-1 px-2 font-medium"
+                            title="Показать файлы пакета"
+                        >
+                            <Files className="w-3.5 h-3.5" />
+                            <span>{batchFiles.length} файлов</span>
+                        </Button>
+                    )}
+                </div>
+            </div>
+
             {streamingProgress && streamingProgress.totalPages > 1 && (
                 <div className="w-full bg-primary/10 border border-primary/20 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs font-medium shrink-0 mb-1">
                     <div className="flex items-center gap-3">
@@ -274,7 +345,7 @@ export function WorkspaceLayout({
                     className={`h-full flex flex-col transition-all duration-300 relative rounded-xl overflow-hidden shadow-sm border min-w-0 ${!isFloating && isSidebarOpen ? 'flex-1' : 'w-full'
                         }`}
                 >
-                <div className="absolute top-4 right-4 z-50 flex gap-2">
+                <div className="absolute bottom-4 right-4 z-50 flex gap-2">
                     {isSidebarOpen && !isFloating && (
                         <Button
                             variant="secondary"
@@ -355,21 +426,8 @@ export function WorkspaceLayout({
                             <BatchDataTable
                                 rows={batchRows}
                                 selectedRowId={selectedBatchRowId}
-                                onSelectRow={(row) => {
-                                    setSelectedBatchRowId(row.fileId);
-                                    if (row.file) setSelectedBatchFile(row.file);
-                                    setActiveHighlight(prev => {
-                                        if (!prev) return null;
-                                        if (prev.fileId && prev.fileId !== row.fileId) return null;
-                                        if (prev.fileName && prev.fileName !== row.fileName) return null;
-                                        return prev;
-                                    });
-                                }}
-                                onSelectCellHighlight={(row, colKey, hl) => {
-                                    setSelectedBatchRowId(row.fileId);
-                                    if (row.file) setSelectedBatchFile(row.file);
-                                    setActiveHighlight(hl);
-                                }}
+                                onSelectRow={handleSelectBatchRow}
+                                onSelectCellHighlight={handleSelectBatchCell}
                                 onConfirmCell={(rowId, path) => {
                                     if (!onBatchRowsChange) return;
                                     const updated = batchRows.map(r => {
@@ -510,13 +568,38 @@ export function WorkspaceLayout({
                         )}
                     </div>
 
-                    {/* Secondary Refinement Chat */}
+                    {/* Collapsible AI refinement assistant */}
                     {onRefine && (
-                        <div className="w-full flex-none p-3 border-t bg-muted/10 relative z-20">
+                        <div className="w-full flex-none border-t bg-background relative z-20">
+                            <button
+                                type="button"
+                                onClick={() => setIsAiOpen(v => !v)}
+                                className="w-full h-10 px-3 flex items-center justify-between text-xs font-semibold hover:bg-muted/50 transition-colors"
+                                aria-expanded={isAiOpen}
+                            >
+                                <span className="flex items-center gap-2">
+                                    <Sparkles className="w-3.5 h-3.5 text-primary" />
+                                    Спросить AI о данных
+                                </span>
+                                <ChevronUp className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${isAiOpen ? "" : "rotate-180"}`} />
+                            </button>
+                            {isAiOpen && <div className="p-3 pt-0 space-y-2">
+                            {!isRefining && (
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="w-full h-9 gap-2 text-xs border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
+                                    onClick={() => onRefine("Повторно найди все уже извлечённые значения на исходном документе и исправь их точные координаты box_2d. Сохрани структуру и значения данных без изменений.")}
+                                >
+                                    <Crosshair className="w-3.5 h-3.5" />
+                                    Обновить привязку к документу
+                                </Button>
+                            )}
                             {isRefining ? (
                                 <div className="flex items-center justify-center h-10 rounded-md bg-primary/10 text-primary border border-primary/20 animate-pulse text-sm font-medium">
-                                    <span className="mr-2">✨</span>
-                                    AI is re-analyzing document...
+                                    <Sparkles className="w-4 h-4 mr-2" />
+                                    AI повторно анализирует документ…
                                 </div>
                             ) : (
                                 <form
@@ -533,15 +616,16 @@ export function WorkspaceLayout({
                                 >
                                     <input
                                         name="prompt"
-                                        placeholder="Forgot something? Ask AI..."
+                                        placeholder="Например: исправь название поставщика…"
                                         className="flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary flex-1 backdrop-blur-sm shadow-sm"
                                         autoComplete="off"
                                     />
                                     <Button type="submit" size="sm" className="h-10 px-4 shadow-sm">
-                                        Send
+                                        Отправить
                                     </Button>
                                 </form>
                             )}
+                            </div>}
                         </div>
                     )}
                 </div>
