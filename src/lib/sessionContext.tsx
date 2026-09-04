@@ -51,17 +51,31 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const [sessions, setSessions] = useState<AppSession[]>([]);
     const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
 
+    const activeSessionIdRef = useRef<string | null>(activeSessionId);
+    useEffect(() => {
+        activeSessionIdRef.current = activeSessionId;
+    }, [activeSessionId]);
+
+    // Keep track of which sessions have already notified for their completion
+    const notifiedSessionsRef = useRef<Set<string>>(new Set());
+    // Keep track of previous running status of each session
+    const prevSessionStatusRef = useRef<Map<string, { isExtracting: boolean; isProcessingBatch: boolean }>>(new Map());
+
     const activeSession = sessions.find(s => s.id === activeSessionId) || null;
 
     const switchToSession = useCallback((id: string | null) => {
+        activeSessionIdRef.current = id;
         setActiveSessionId(id);
     }, []);
 
     const createSession = useCallback(() => {
+        activeSessionIdRef.current = null;
         setActiveSessionId(null);
     }, []);
 
     const closeSession = useCallback((id: string) => {
+        notifiedSessionsRef.current.delete(id);
+        prevSessionStatusRef.current.delete(id);
         setSessions(prev => {
             const target = prev.find(s => s.id === id);
             if (target?.abortController) {
@@ -73,6 +87,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
         setActiveSessionId(curr => {
             if (curr !== id) return curr;
+            activeSessionIdRef.current = null;
             return null;
         });
     }, []);
@@ -85,6 +100,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             }
             return [newSession, ...prev];
         });
+        activeSessionIdRef.current = newSession.id;
         setActiveSessionId(newSession.id);
     }, []);
 
@@ -92,32 +108,60 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setSessions(prev =>
             prev.map(s => {
                 if (s.id !== id) return s;
-
                 const resolved = typeof update === 'function' ? update(s) : update;
-                const next = { ...s, ...resolved };
+                return { ...s, ...resolved };
+            })
+        );
+    }, []);
 
-                // Check if session just finished extracting or processing batch in background
-                const wasRunning = s.isExtracting || s.isProcessingBatch;
-                const isNowDone = (s.isExtracting && next.isExtracting === false) || (s.isProcessingBatch && next.isProcessingBatch === false);
+    // Effect to monitor session completions and notify once if user is in background
+    useEffect(() => {
+        const currentIds = new Set(sessions.map(s => s.id));
+        for (const id of prevSessionStatusRef.current.keys()) {
+            if (!currentIds.has(id)) {
+                prevSessionStatusRef.current.delete(id);
+                notifiedSessionsRef.current.delete(id);
+            }
+        }
 
-                if (wasRunning && isNowDone && (next.extractedData || (next.batchRows && next.batchRows.length > 0))) {
-                    // Send notification if user is not currently viewing this session
-                    if (activeSessionId !== id) {
-                        toast.success(`Документ "${s.title}" успешно обработан!`, {
+        sessions.forEach(session => {
+            const prev = prevSessionStatusRef.current.get(session.id);
+            const wasRunning = prev ? (prev.isExtracting || prev.isProcessingBatch) : false;
+            const isNowRunning = session.isExtracting || session.isProcessingBatch;
+            const isNowFullyDone = !session.isExtracting && !session.isProcessingBatch;
+            const hasResults = Boolean(session.extractedData || (session.batchRows && session.batchRows.length > 0));
+
+            if (wasRunning && isNowFullyDone && hasResults && !session.error) {
+                if (!notifiedSessionsRef.current.has(session.id)) {
+                    notifiedSessionsRef.current.add(session.id);
+
+                    // Only notify if user is NOT currently looking at this session
+                    if (activeSessionIdRef.current !== session.id) {
+                        toast.success(`Документ "${session.title}" успешно обработан!`, {
+                            id: `session-completed-${session.id}`,
                             description: "Нажмите, чтобы открыть результаты",
                             action: {
                                 label: "Открыть",
-                                onClick: () => setActiveSessionId(id),
+                                onClick: () => {
+                                    activeSessionIdRef.current = session.id;
+                                    setActiveSessionId(session.id);
+                                },
                             },
                             duration: 8000,
                         });
                     }
                 }
+            } else if (isNowRunning) {
+                // If a session restarts (e.g. batch retry), reset notification flag
+                notifiedSessionsRef.current.delete(session.id);
+            }
 
-                return next;
-            })
-        );
-    }, [activeSessionId]);
+            prevSessionStatusRef.current.set(session.id, {
+                isExtracting: session.isExtracting,
+                isProcessingBatch: session.isProcessingBatch,
+            });
+        });
+    }, [sessions]);
 
     return (
         <SessionContext.Provider
