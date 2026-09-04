@@ -95,9 +95,10 @@ export async function runReceiptBatch(
     schema: any,
     opts: RunReceiptBatchOptions
 ): Promise<DocRow[]> {
+    const maxPasses = opts.maxAutoRetryPasses ?? 6;
     const limiter = createLimiter({
-        maxConcurrent: opts.concurrency ?? 4,
-        maxPerMinute: opts.rpm ?? 12,
+        maxConcurrent: opts.concurrency ?? 2,
+        maxPerMinute: opts.rpm ?? 7,
     });
 
     let finished = 0;
@@ -198,13 +199,20 @@ export async function runReceiptBatch(
             opts.onRow(errRow);
         } finally {
             opts.onProgress(++finished, files.length);
+            const currentFailed = Array.from(rowsMap.values()).filter(r => r.status === "failed" || r.status === "timeout").length;
+            if (finished < files.length) {
+                if (currentFailed > 0) {
+                    opts.onStatusMessage?.(`Круг 1/${maxPasses - 1}: обработано ${finished}/${files.length} (${currentFailed} в очереди на автоповтор)...`);
+                } else {
+                    opts.onStatusMessage?.(`Круг 1/${maxPasses - 1}: обработано ${finished}/${files.length}...`);
+                }
+            }
         }
     };
 
     await Promise.all(files.map(f => processFile(f)));
 
     // Autonomous Multi-Pass Auto-Retry for failed / timed-out files (up to 5 automatic retry rounds under the hood)
-    const maxPasses = opts.maxAutoRetryPasses ?? 6;
     let pass = 1;
     let currentRows = Array.from(rowsMap.values());
     let failedRows = currentRows.filter(r => r.status === "failed" || r.status === "timeout");

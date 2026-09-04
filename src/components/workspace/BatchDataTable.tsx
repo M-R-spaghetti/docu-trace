@@ -649,15 +649,28 @@ export function BatchDataTable({
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
                         {stats.failedDocs > 0 && onRetryFailed && (
-                            <Button
-                                variant="destructive"
-                                size="sm"
-                                onClick={onRetryFailed}
-                                className="h-8 gap-1 text-xs font-semibold shadow-xs"
-                            >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                                Ошибки ({stats.failedDocs})
-                            </Button>
+                            isProcessing ? (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled
+                                    className="h-8 gap-1.5 text-xs font-semibold text-amber-500 border-amber-500/30 bg-amber-500/10 shadow-xs cursor-default"
+                                    title="Чеки автоматически будут повторно обработаны после завершения текущего круга"
+                                >
+                                    <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-500" />
+                                    В очереди на автоповтор ({stats.failedDocs})
+                                </Button>
+                            ) : (
+                                <Button
+                                    variant="destructive"
+                                    size="sm"
+                                    onClick={onRetryFailed}
+                                    className="h-8 gap-1 text-xs font-semibold shadow-xs"
+                                >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                    Ошибки ({stats.failedDocs})
+                                </Button>
+                            )
                         )}
 
                         {/* Review Mode Button */}
@@ -1166,10 +1179,16 @@ export function BatchDataTable({
                                                                     <Loader2 className="w-2.5 h-2.5 animate-spin mr-1" /> Сканирование
                                                                 </Badge>
                                                             )}
-                                                            {doc.status === "failed" && (
-                                                                <Badge variant="destructive" className="text-[10px] py-0 shrink-0" title={doc.error}>
-                                                                    Ошибка
-                                                                </Badge>
+                                                            {(doc.status === "failed" || doc.status === "timeout") && (
+                                                                isProcessing ? (
+                                                                    <Badge variant="outline" className="text-[10px] py-0 text-amber-500 border-amber-500/30 bg-amber-500/10 shrink-0" title={`В очереди на автоповтор: ${doc.error || 'ожидание квоты'}`}>
+                                                                        <Clock className="w-2.5 h-2.5 mr-1 animate-pulse" /> Ждёт автоповтора
+                                                                    </Badge>
+                                                                ) : (
+                                                                    <Badge variant="destructive" className="text-[10px] py-0 shrink-0" title={doc.error}>
+                                                                        {doc.status === "timeout" ? "Таймаут" : "Ошибка"}
+                                                                    </Badge>
+                                                                )
                                                             )}
                                                         </div>
 

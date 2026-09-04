@@ -47,13 +47,14 @@ export async function withRetry<T>(
             }
 
             // If server specified Retry-After header in seconds, honor it
+            const baseDelay = err.status === 429 ? Math.max(delay, 7000) : delay;
             const waitMs = err.retryAfter
                 ? err.retryAfter * 1000 + 500
-                : delay + Math.random() * 500; // jitter
+                : baseDelay + Math.random() * 1000; // jitter
 
             console.warn(`[withRetry] Attempt ${attempt} failed (${err.message || err.status}). Retrying in ${Math.round(waitMs)}ms...`);
             await sleep(waitMs);
-            delay = Math.min(delay * 2, maxDelay);
+            delay = Math.min(baseDelay * 2, maxDelay);
         }
     }
 
