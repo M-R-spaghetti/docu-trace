@@ -146,7 +146,17 @@ export function UploadSuccess({
                                     placeholder="Например: Извлеки только таблицу позиций товаров с ценами и количеством, шапку и контакты магазина не извлекать..."
                                     value={prompt}
                                     onChange={(e) => onPromptChange(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter" && !e.shiftKey) {
+                                            e.preventDefault();
+                                            onProceed();
+                                        }
+                                    }}
                                 />
+                                <div className="flex items-center justify-between text-[11px] text-muted-foreground px-1">
+                                    <span>Нажмите <kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono text-[10px] text-foreground">Enter ↵</kbd> для запуска</span>
+                                    <span><kbd className="px-1.5 py-0.5 rounded bg-muted border font-mono text-[10px] text-foreground">Shift + Enter</kbd> для новой строки</span>
+                                </div>
                             </div>
 
                             <div className="space-y-2">
@@ -175,9 +185,10 @@ export function UploadSuccess({
                             <Button variant="outline" className="flex-1" onClick={onReset}>
                                 Выбрать другие файлы
                             </Button>
-                            <Button className="flex-1 gap-2 bg-primary hover:bg-primary/90" onClick={onProceed}>
+                            <Button className="flex-1 gap-2 bg-primary hover:bg-primary/90" onClick={onProceed} title="Начать извлечение (Enter ↵)">
                                 <Sparkles className="w-4 h-4" />
-                                {isBatch ? `Начать извлечение (${batchCount} файлов)` : "Начать извлечение"}
+                                <span>{isBatch ? `Начать извлечение (${batchCount} файлов)` : "Начать извлечение"}</span>
+                                <kbd className="hidden sm:inline-block ml-1 px-1.5 py-0.5 rounded bg-primary-foreground/20 text-primary-foreground font-mono text-[10px]">↵</kbd>
                             </Button>
                         </motion.div>
                     </div>
