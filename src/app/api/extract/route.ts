@@ -227,7 +227,7 @@ async function generateContentWithModelFallback(ai: any, requestConfig: any) {
     const candidateModels = [
         process.env.GEMINI_MODEL || "gemini-2.5-flash",
         "gemini-2.0-flash",
-        "gemini-1.5-flash",
+        "gemini-2.0-flash-lite",
     ];
 
     let lastError: any = null;
