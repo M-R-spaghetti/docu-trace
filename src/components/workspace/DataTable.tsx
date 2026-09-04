@@ -304,14 +304,13 @@ export function DataTable({
     // Approve an item and advance to next pending
     const approveItem = useCallback((id: string | undefined) => {
         if (!id) return;
-        setVerificationItems(prev => {
-            const updated = prev.map(item =>
-                item.id === id ? { ...item, status: 'verified' as VerificationStatus } : item
-            );
-            verificationItemsRef.current = updated;
-            syncChanges(extracted, updated);
-            return updated;
-        });
+        const current = verificationItemsRef.current;
+        const updated = current.map(item =>
+            item.id === id ? { ...item, status: 'verified' as VerificationStatus } : item
+        );
+        verificationItemsRef.current = updated;
+        setVerificationItems(updated);
+        syncChanges(extracted, updated);
     }, [extracted, syncChanges]);
 
     const approveAndNext = useCallback((id: string | undefined) => {
@@ -371,34 +370,33 @@ export function DataTable({
             );
         }
 
-        setVerificationItems(prev => {
-            const updated = prev.map(item => {
-                if (item.id !== editingId) return item;
-                if (editColumnKey && item.columns) {
-                    const updatedColumns = item.columns.map(col =>
-                        col.key === editColumnKey ? { ...col, value: editValue } : col
-                    );
-                    const newDisplayValue = updatedColumns.map(c => c.value).join(' | ');
-                    return {
-                        ...item,
-                        status: 'edited' as VerificationStatus,
-                        columns: updatedColumns,
-                        value: newDisplayValue,
-                        editedValue: newDisplayValue
-                    };
-                }
+        const current = verificationItemsRef.current;
+        const updated = current.map(item => {
+            if (item.id !== editingId) return item;
+            if (editColumnKey && item.columns) {
+                const updatedColumns = item.columns.map(col =>
+                    col.key === editColumnKey ? { ...col, value: editValue } : col
+                );
+                const newDisplayValue = updatedColumns.map(c => c.value).join(' | ');
                 return {
                     ...item,
                     status: 'edited' as VerificationStatus,
-                    editedValue: editValue,
-                    value: editValue
+                    columns: updatedColumns,
+                    value: newDisplayValue,
+                    editedValue: newDisplayValue
                 };
-            });
-
-            verificationItemsRef.current = updated;
-            syncChanges(updatedExtracted, updated);
-            return updated;
+            }
+            return {
+                ...item,
+                status: 'edited' as VerificationStatus,
+                editedValue: editValue,
+                value: editValue
+            };
         });
+
+        verificationItemsRef.current = updated;
+        setVerificationItems(updated);
+        syncChanges(updatedExtracted, updated);
 
         setEditingId(null);
         setEditColumnKey(null);

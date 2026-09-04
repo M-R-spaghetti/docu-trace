@@ -63,8 +63,10 @@ export default function Home() {
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const handleDataChange = useCallback((newData: any, newVerificationState: VerificationStateMap) => {
-    setExtractedData(newData);
-    setVerificationState(newVerificationState);
+    queueMicrotask(() => {
+      setExtractedData(newData);
+      setVerificationState(newVerificationState);
+    });
 
     if (currentHistoryId) {
       if (saveTimeoutRef.current) {
