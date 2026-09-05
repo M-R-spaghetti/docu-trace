@@ -1,5 +1,5 @@
 import { optimizeImageFile } from "@/lib/media";
-import { createLimiter } from "./limiter";
+import { createLimiter, mapWithConcurrency } from "./limiter";
 import { withRetry, HttpError } from "./retry";
 import { saveHistory } from "@/lib/db";
 
@@ -189,8 +189,7 @@ export async function runBatchOrchestration(opts: RunBatchOptions): Promise<Batc
             job.status = "preparing";
             opts.onJobUpdate(job, getProgress());
 
-            const preparedFile = await prepareBatchDocument(rawFile);
-            const contentHash = await hashFile(preparedFile);
+            const contentHash = await hashFile(rawFile);
             job.id = contentHash;
 
             if (alreadyDone.has(contentHash)) {
@@ -198,6 +197,8 @@ export async function runBatchOrchestration(opts: RunBatchOptions): Promise<Batc
                 opts.onJobUpdate(job, getProgress());
                 return;
             }
+
+            const preparedFile = await prepareBatchDocument(rawFile);
 
             // 2. Rate-limited Extraction with Retries
             job.status = "extracting";
@@ -245,7 +246,7 @@ export async function runBatchOrchestration(opts: RunBatchOptions): Promise<Batc
     };
 
     // Run all tasks through limiter
-    await Promise.all(opts.files.map(file => processFile(file)));
+    await mapWithConcurrency(opts.files, opts.concurrency ?? 3, processFile);
 
     return Array.from(jobsMap.values());
 }

@@ -74,8 +74,10 @@ function downloadBlob(blob: Blob, filename: string) {
     URL.revokeObjectURL(url);
 }
 
-function escapeCSVValue(val: any): string {
-    const cleaned = String(val ?? '').replace(/"/g, '""');
+export function escapeCSVValue(val: any): string {
+    let raw = String(val ?? '');
+    if (/^[=+\-@\t\r]/.test(raw)) raw = `'${raw}`;
+    const cleaned = raw.replace(/"/g, '""');
     if (
         cleaned.includes(';') ||
         cleaned.includes(',') ||
@@ -88,12 +90,14 @@ function escapeCSVValue(val: any): string {
     return cleaned;
 }
 
-function escapeXml(val: any): string {
+export function escapeXml(val: any): string {
     return String(val ?? '')
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
 }
 
 export function exportToCSV(data: any, filename: string = "docutrace-export.csv") {

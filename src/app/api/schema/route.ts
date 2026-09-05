@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { acquireApiRequest, validatePrompt } from "@/lib/server/requestGuard";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -85,35 +86,43 @@ const ARCHITECT_PROMPT = `Ты — Senior Data Architect и эксперт по 
    - Вложенность глубже одного уровня КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНА (внутри элементов 'items' могут быть только LocatedValue, никаких вложенных подмассивов).`;
 
 async function generateContentWithModelFallback(ai: any, requestConfig: any) {
-    const candidateModels = [
+    const candidateModels = Array.from(new Set([
         process.env.GEMINI_MODEL || "gemini-2.5-flash",
         "gemini-flash-latest",
         "gemini-flash-lite-latest",
-    ];
+    ]));
 
     let lastError: any = null;
     for (const model of candidateModels) {
         try {
             console.log(`[Schema Engine] Requesting model: ${model}...`);
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error(`Timeout after 20s for model ${model}`)), 20000)
-            );
-            const contentPromise = ai.models.generateContent({
+            return await ai.models.generateContent({
                 ...requestConfig,
                 model,
+                config: {
+                    ...requestConfig.config,
+                    httpOptions: {
+                        ...requestConfig.config?.httpOptions,
+                        timeout: 18_000,
+                    },
+                },
             });
-            return await Promise.race([contentPromise, timeoutPromise]);
         } catch (err: any) {
             lastError = err;
-            const status = err?.status || err?.code;
-            console.warn(`[Schema Fallback] Model ${model} failed (${err?.message || status}), retrying next candidate...`);
-            continue;
+            const status = Number(err?.status ?? err?.error?.status ?? err?.error?.code ?? err?.code);
+            const message = String(err?.message || "");
+            const canFallback = [404, 429, 503].includes(status)
+                || /model.*not found|resource_exhausted|temporarily unavailable|timeout/i.test(message);
+            if (!canFallback) throw err;
+            console.warn(`[Schema Fallback] Model ${model} temporarily unavailable (${message || status}).`);
         }
     }
     throw lastError;
 }
 
 export async function POST(req: NextRequest) {
+    const guard = acquireApiRequest(req, "schema");
+    if (guard.response) return guard.response;
     try {
         let userQuery = "Extract all important information, invoice numbers, line items, and totals.";
         let format = "auto";
@@ -121,12 +130,12 @@ export async function POST(req: NextRequest) {
         const contentType = req.headers.get("content-type") || "";
         if (contentType.includes("application/json")) {
             const body = await req.json().catch(() => ({}));
-            userQuery = body.prompt || userQuery;
+            userQuery = validatePrompt(body.prompt) || userQuery;
             format = body.format || format;
         } else if (contentType.includes("multipart/form-data")) {
             const formData = await req.formData().catch(() => null);
             if (formData) {
-                userQuery = (formData.get("prompt") as string) || userQuery;
+                userQuery = validatePrompt(formData.get("prompt")) || userQuery;
                 format = (formData.get("format") as string) || format;
             }
         }
@@ -175,7 +184,9 @@ export async function POST(req: NextRequest) {
         console.error("Schema Generation Error:", error);
         return NextResponse.json(
             { error: error.message || "Failed to generate schema." },
-            { status: 500 }
+            { status: typeof error?.status === "number" && error.status >= 400 && error.status <= 599 ? error.status : 500 }
         );
+    } finally {
+        guard.release();
     }
 }

@@ -1,20 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { acquireApiRequest, safeHttpStatus, validatePrompt } from "@/lib/server/requestGuard";
+import { ALLOWED_MIME_TYPES } from "@/lib/media";
 
 // Max duration for Vercel Serverless execution (up to 60s for Pro/Enterprise)
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const ALLOWED_MIME_TYPES = new Set([
-    "application/pdf",
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/webp"
-]);
-
-// Configurable max payload limit in megabytes (defaults to 20MB, can be tuned via MAX_FILE_SIZE_MB)
-const MAX_PAYLOAD_BYTES = (Number(process.env.MAX_FILE_SIZE_MB) || 20) * 1024 * 1024;
+// Keep the default below common serverless request-body limits. Self-hosted deployments may override it.
+const MAX_PAYLOAD_BYTES = (Number(process.env.MAX_FILE_SIZE_MB) || 4) * 1024 * 1024;
 
 let _ai: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
@@ -224,39 +218,47 @@ function mergeCorrectedCoordinates(original: any, corrected: any): any {
 }
 
 async function generateContentWithModelFallback(ai: any, requestConfig: any) {
-    const candidateModels = [
+    const candidateModels = Array.from(new Set([
         process.env.GEMINI_MODEL || "gemini-2.5-flash",
         "gemini-flash-latest",
         "gemini-flash-lite-latest",
-    ];
+    ]));
 
     let lastError: any = null;
     for (const model of candidateModels) {
         try {
             console.log(`[Model Engine] Requesting model: ${model}...`);
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error(`Timeout after 30s for model ${model}`)), 30000)
-            );
-            const contentPromise = ai.models.generateContent({
+            return await ai.models.generateContent({
                 ...requestConfig,
                 model,
+                config: {
+                    ...requestConfig.config,
+                    httpOptions: {
+                        ...requestConfig.config?.httpOptions,
+                        timeout: 22_000,
+                    },
+                },
             });
-            return await Promise.race([contentPromise, timeoutPromise]);
         } catch (err: any) {
             lastError = err;
-            const status = err?.status || err?.code;
-            console.warn(`[Model Fallback] Model ${model} failed (${err?.message || status}), retrying next candidate...`);
-            continue;
+            const status = Number(err?.status ?? err?.error?.status ?? err?.error?.code ?? err?.code);
+            const message = String(err?.message || "");
+            const canFallback = [404, 429, 503].includes(status)
+                || /model.*not found|resource_exhausted|temporarily unavailable|timeout/i.test(message);
+            if (!canFallback) throw err;
+            console.warn(`[Model Fallback] Model ${model} temporarily unavailable (${message || status}).`);
         }
     }
     throw lastError;
 }
 
 export async function POST(req: NextRequest) {
+    const guard = acquireApiRequest(req, "extract");
+    if (guard.response) return guard.response;
     try {
         const formData = await req.formData();
         const file = formData.get("file") as File | null;
-        const userQuery = formData.get("prompt") as string | null || "Extract all important information from this document.";
+        const userQuery = validatePrompt(formData.get("prompt")) || "Extract all important information from this document.";
         const format = formData.get("format") as string | null || "auto";
 
         if (!file) {
@@ -477,18 +479,9 @@ ${JSON.stringify(extractionResult)}`;
     } catch (error: any) {
         console.error("Extraction Pipeline Error:", error);
 
-        let status = 500;
+        const status = safeHttpStatus(error);
         let retryAfter: number | null = null;
         const message = error.message || "Failed to process document.";
-
-        // Attempt to extract status code (e.g. 429, 503)
-        if (typeof error.status === 'number') {
-            status = error.status;
-        } else if (error.error && typeof error.error.code === 'number') {
-            status = error.error.code;
-        } else if (/429|resource_exhausted|quota|too many requests/i.test(message)) {
-            status = 429;
-        }
 
         // Try to extract retryDelay from Google RPC details or message
         const details = error?.error?.details || error?.details;
@@ -518,5 +511,7 @@ ${JSON.stringify(extractionResult)}`;
             { error: message, retryAfter: retryAfter || undefined },
             { status, headers }
         );
+    } finally {
+        guard.release();
     }
 }

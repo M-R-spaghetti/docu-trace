@@ -1,5 +1,5 @@
 import { optimizeImageFile } from "./media";
-import { createLimiter } from "./batch/limiter";
+import { createLimiter, mapWithConcurrency } from "./batch/limiter";
 import { withRetry, HttpError } from "./batch/retry";
 import { saveHistory } from "./db";
 import { DocRow } from "./batchTypes";
@@ -207,7 +207,7 @@ export async function runReceiptBatch(
         }
     };
 
-    await Promise.all(files.map(f => processFile(f)));
+    await mapWithConcurrency(files, opts.concurrency ?? 3, processFile);
 
     // Autonomous Multi-Pass Auto-Retry for failed / timed-out files (up to 5 automatic retry rounds under the hood)
     let pass = 1;
@@ -239,7 +239,7 @@ export async function runReceiptBatch(
             maxPerMinute: Math.min(10, opts.rpm ?? 10),
         });
 
-        await Promise.all(filesToRetry.map(async (raw) => {
+        await mapWithConcurrency(filesToRetry, retryConcurrency, async (raw) => {
             if (opts.signal?.aborted) return;
             const fileId = generateFileId(raw);
             const extractingRow: DocRow = {
@@ -297,7 +297,7 @@ export async function runReceiptBatch(
                 const currentDone = Array.from(rowsMap.values()).filter(r => r.status === "done").length;
                 opts.onProgress(currentDone, files.length);
             }
-        }));
+        });
 
         currentRows = Array.from(rowsMap.values());
         failedRows = currentRows.filter(r => r.status === "failed" || r.status === "timeout");
