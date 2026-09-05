@@ -304,6 +304,9 @@ export function DataTable({
         return items;
     }, [data, filename]);
 
+    // The initializer intentionally reads the previous-items ref so verification
+    // state survives rebuilding dynamic model output without a blank first frame.
+    // eslint-disable-next-line react-hooks/refs
     const [verificationItems, setVerificationItems] = useState<VerificationItem[]>(() => {
         const initial = buildVerificationItems();
         verificationItemsRef.current = initial;

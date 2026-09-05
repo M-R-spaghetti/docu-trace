@@ -32,6 +32,14 @@ An intelligent document analysis and data extraction platform powered by Google 
 3. Create a `.env.local` file and add your Gemini API key:
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-2.5-flash
+   MAX_FILE_SIZE_MB=4
+   ```
+
+   For a private deployment, also protect the entire site and API:
+   ```env
+   APP_BASIC_AUTH_USER=docutrace
+   APP_BASIC_AUTH_PASSWORD=replace_with_a_long_random_password
    ```
 
 4. Run the development server:
@@ -44,5 +52,23 @@ An intelligent document analysis and data extraction platform powered by Google 
 ## Deployment & Production Notes
 
 - **Vercel Serverless Execution Timeout**: The extraction route is configured with `export const maxDuration = 60` to accommodate multi-page documents and spatial vision extraction. Ensure your deployment tier supports functions up to 60 seconds (Vercel Pro or custom server).
-- **Payload & Image Compression**: Vercel Serverless has a strict 4.5MB incoming body limit. DocuTrace features an automatic client-side image optimizer that downscales high-resolution camera scans (e.g. 15MB photos from smartphones) to 2048px before transmission, reducing file sizes to ~600KB-1MB with zero quality loss for OCR.
+- **Payload & Image Compression**: The default API limit is 4MB to stay below common serverless request-body limits. DocuTrace compresses large camera scans client-side to 2048px before transmission. Compression is lossy and may affect very small text; keep original scans available for human verification.
 - **PDF Constraints**: PDFs should be under 4.5MB when deployed on Vercel. For self-hosted Docker deployments, the limit can be increased via the `MAX_FILE_SIZE_MB` environment variable.
+- **Abuse protection**: API routes apply per-IP burst, sustained-rate, and concurrent-request limits. The built-in limiter is per application instance; use a shared Redis-backed limiter before running many server instances.
+
+## Privacy & Data Handling
+
+- Uploaded documents are sent to the configured Google Gemini API for extraction and coordinate grounding. Do not upload documents unless you are authorized to share them with that provider.
+- Session history and original file blobs are stored locally in the browser's IndexedDB. They are not encrypted by DocuTrace and remain available to other users of the same browser profile.
+- Use **Clear history** in the application, or clear the site's browser storage, to remove locally stored sessions and document blobs.
+- JSON and spreadsheet exports may contain sensitive source data. Store and share exported files according to your organization's retention policy.
+
+## Quality Checks
+
+Run the complete local verification suite before deployment:
+
+```bash
+npm run check
+```
+
+This runs unit tests, TypeScript, ESLint, and a production Next.js build.
