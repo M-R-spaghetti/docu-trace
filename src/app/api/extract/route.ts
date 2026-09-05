@@ -225,9 +225,8 @@ function mergeCorrectedCoordinates(original: any, corrected: any): any {
 
 async function generateContentWithModelFallback(ai: any, requestConfig: any) {
     const candidateModels = [
-        process.env.GEMINI_MODEL || "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-2.5-flash",
+        process.env.GEMINI_MODEL || "gemini-2.5-flash",
+        "gemini-flash-latest",
         "gemini-flash-lite-latest",
     ];
 

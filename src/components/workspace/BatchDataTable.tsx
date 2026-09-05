@@ -391,6 +391,18 @@ export function BatchDataTable({
 
     // Current queue item is stable even while extraction adds more rows.
     const currentQueueItem = reviewQueue[queueIndex] || null;
+    const currentFinalValue = currentQueueItem
+        ? getColType(currentQueueItem.colKey) === "date"
+            ? parseDocDate(currentQueueItem.cellVal).display
+            : currentQueueItem.cellVal
+        : "";
+    const currentValuesDiffer = Boolean(currentQueueItem && currentFinalValue !== currentQueueItem.cellVal);
+
+    const startQueueEditing = useCallback(() => {
+        if (!currentQueueItem) return;
+        setIsEditingInQueue(true);
+        setQueueEditValue(currentQueueItem.cellVal === "—" ? "" : currentQueueItem.cellVal);
+    }, [currentQueueItem]);
 
     // Focus document viewer to current queue item with auto-zoom
     const focusQueueItem = useCallback((item: typeof currentQueueItem) => {
@@ -522,10 +534,7 @@ export function BatchDataTable({
                 handleConfirmCurrent();
             } else if (e.key === "e" || e.key === "E" || e.key === "у" || e.key === "У") {
                 e.preventDefault();
-                if (currentQueueItem) {
-                    setIsEditingInQueue(true);
-                    setQueueEditValue(currentQueueItem.cellVal === "—" ? "" : currentQueueItem.cellVal);
-                }
+                startQueueEditing();
             } else if ((e.key === "u" || e.key === "U" || e.key === "г" || e.key === "Г") || (e.key === "z" && (e.metaKey || e.ctrlKey))) {
                 e.preventDefault();
                 handleUndo();
@@ -569,6 +578,7 @@ export function BatchDataTable({
         handleConfirmCurrent,
         handleUndo,
         handleSkip,
+        startQueueEditing,
         onUpdateCell,
         onConfirmRow,
         onConfirmDoc,
@@ -1043,41 +1053,39 @@ export function BatchDataTable({
                                 </div>
                             )}
 
-                            {/* Field Values Comparison */}
-                            <div className="grid grid-cols-1 min-[540px]:grid-cols-2 gap-2 pt-1">
-                                {/* Raw in document */}
-                                <div className="p-3 rounded-xl border bg-muted/20 space-y-1">
-                                    <div className="text-[11px] font-semibold text-muted-foreground uppercase">
-                                        Извлечено из документа
-                                    </div>
-                                    <div className="font-mono text-sm font-bold text-foreground break-all">
-                                        {currentQueueItem.cellVal}
-                                    </div>
-                                    {getColType(currentQueueItem.colKey) === "date" && (
-                                        <div className="text-[10px] text-muted-foreground">
-                                            {parseDocDate(currentQueueItem.cellVal).isAmbiguous && (
-                                                <span className="text-amber-600 font-medium">
-                                                    Возможно: {parseDocDate(currentQueueItem.cellVal).ambiguousAlternative}
-                                                </span>
-                                            )}
+                            {/* Field value: compare only when normalization really changed it */}
+                            <div className={`grid gap-2 pt-1 ${currentValuesDiffer && !isEditingInQueue ? "grid-cols-1 min-[540px]:grid-cols-2" : "grid-cols-1"}`}>
+                                {currentValuesDiffer && !isEditingInQueue && (
+                                    <div className="p-3 rounded-xl border bg-muted/20 space-y-1">
+                                        <div className="text-[11px] font-semibold text-muted-foreground uppercase">
+                                            В документе
                                         </div>
-                                    )}
-                                </div>
+                                        <div className="font-mono text-sm font-bold text-foreground break-all">
+                                            {currentQueueItem.cellVal}
+                                        </div>
+                                    </div>
+                                )}
 
-                                {/* Normalized & Editable */}
-                                <div className="p-3 rounded-xl border bg-background space-y-1">
-                                    <div className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between">
-                                        <span>Итоговое значение</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                setIsEditingInQueue(true);
-                                                setQueueEditValue(currentQueueItem.cellVal === "—" ? "" : currentQueueItem.cellVal);
-                                            }}
-                                            className="text-primary hover:underline text-[10px] flex items-center gap-1"
-                                        >
-                                            <Pencil className="w-3 h-3" /> Изменить [E]
-                                        </button>
+                                <div
+                                    role={!isEditingInQueue ? "button" : undefined}
+                                    tabIndex={!isEditingInQueue ? 0 : undefined}
+                                    onClick={!isEditingInQueue ? startQueueEditing : undefined}
+                                    onKeyDown={!isEditingInQueue ? (event) => {
+                                        if (event.key === "Enter" || event.key === " ") {
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            startQueueEditing();
+                                        }
+                                    } : undefined}
+                                    className={`p-3 rounded-xl border bg-background space-y-1 transition-colors ${!isEditingInQueue ? "cursor-text hover:border-primary/60 hover:bg-primary/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30" : ""}`}
+                                >
+                                    <div className="text-[11px] font-semibold text-muted-foreground uppercase flex items-center justify-between gap-2">
+                                        <span>{currentValuesDiffer ? "После нормализации" : "Значение из документа"}</span>
+                                        {!isEditingInQueue && (
+                                            <span className="text-primary normal-case tracking-normal text-[10px] flex items-center gap-1 whitespace-nowrap">
+                                                <Pencil className="w-3 h-3" /> Нажмите, чтобы изменить · E
+                                            </span>
+                                        )}
                                     </div>
 
                                     {isEditingInQueue ? (
@@ -1087,12 +1095,14 @@ export function BatchDataTable({
                                                 type="text"
                                                 value={queueEditValue}
                                                 onChange={e => setQueueEditValue(e.target.value)}
+                                                onClick={e => e.stopPropagation()}
                                                 className="w-full h-8 text-sm px-2 rounded border border-primary bg-background font-mono focus:outline-none focus:ring-2 focus:ring-primary/20"
                                             />
                                             <Button
                                                 size="sm"
                                                 className="h-8 px-2.5 text-xs gap-1"
-                                                onClick={() => {
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
                                                     if (onUpdateCell) {
                                                         onUpdateCell(currentQueueItem.fileId, currentQueueItem.path, queueEditValue);
                                                     }
@@ -1105,9 +1115,12 @@ export function BatchDataTable({
                                         </div>
                                     ) : (
                                         <div className="font-mono text-sm font-bold text-primary break-all pt-1">
-                                            {getColType(currentQueueItem.colKey) === "date"
-                                                ? parseDocDate(currentQueueItem.cellVal).display
-                                                : currentQueueItem.cellVal}
+                                            {currentFinalValue}
+                                        </div>
+                                    )}
+                                    {!currentValuesDiffer && !isEditingInQueue && getColType(currentQueueItem.colKey) === "date" && parseDocDate(currentQueueItem.cellVal).isAmbiguous && (
+                                        <div className="text-[10px] text-amber-600 font-medium">
+                                            Возможно: {parseDocDate(currentQueueItem.cellVal).ambiguousAlternative}
                                         </div>
                                     )}
                                 </div>

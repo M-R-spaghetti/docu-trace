@@ -204,8 +204,8 @@ export default function Home() {
           prompt: chosenPrompt || undefined,
           format: "table",
           sessionId,
-          concurrency: 2,
-          rpm: 7,
+          concurrency: 3,
+          rpm: 10,
           maxAutoRetryPasses: 6,
           onStatusMessage: (msg) => {
             updateSession(recordId, { statusMessage: msg });
@@ -410,8 +410,8 @@ export default function Home() {
         prompt: activeSession.prompt || undefined,
         format: "table",
         sessionId: sessId,
-        concurrency: 2,
-        rpm: 7,
+        concurrency: 3,
+        rpm: 10,
         maxAutoRetryPasses: 6,
         onStatusMessage: (msg) => {
           updateSession(sessId, { statusMessage: msg });

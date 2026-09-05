@@ -97,8 +97,8 @@ export async function runReceiptBatch(
 ): Promise<DocRow[]> {
     const maxPasses = opts.maxAutoRetryPasses ?? 6;
     const limiter = createLimiter({
-        maxConcurrent: opts.concurrency ?? 2,
-        maxPerMinute: opts.rpm ?? 7,
+        maxConcurrent: opts.concurrency ?? 3,
+        maxPerMinute: opts.rpm ?? 10,
     });
 
     let finished = 0;
