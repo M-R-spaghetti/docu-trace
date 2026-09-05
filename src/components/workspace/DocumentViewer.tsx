@@ -19,10 +19,13 @@ interface DocumentViewerProps {
     activeHighlight: ActiveHighlight | null;
     batchFiles?: File[];
     onFileReplaced?: (newFile: File) => void;
+    onBatchFilesReplaced?: (files: File[]) => void;
 }
 
-export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplaced }: DocumentViewerProps) {
+export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplaced, onBatchFilesReplaced }: DocumentViewerProps) {
     const containerRef = useRef<HTMLDivElement>(null);
+    const userControlledViewRef = useRef(false);
+    const lastHighlightRef = useRef<string>("");
 
     const isBatchMode = Boolean(batchFiles && batchFiles.length > 1);
     const [currentBatchPage, setCurrentBatchPage] = useState(1);
@@ -42,6 +45,19 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     const [baseDims, setBaseDims] = useState<{ width: number; height: number }>({ width: 700, height: 950 });
 
     const imageRef = useRef<HTMLImageElement | null>(null);
+
+    const setManualZoom = useCallback((next: number | ((current: number) => number)) => {
+        userControlledViewRef.current = true;
+        setZoomScale(current => typeof next === "function" ? next(current) : next);
+    }, []);
+
+    const showWholeDocument = useCallback(() => {
+        userControlledViewRef.current = true;
+        setZoomScale(1);
+        requestAnimationFrame(() => {
+            containerRef.current?.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+        });
+    }, []);
 
     // Strip verbose file prefixes from highlight labels (e.g. "002.JPG - DATE" -> "DATE")
     const cleanHighlightLabel = (label: string): string => {
@@ -224,7 +240,24 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     // Auto-scroll and smart-zoom when highlight changes
     useEffect(() => {
         if (!activeHighlight) {
+            lastHighlightRef.current = "";
+            userControlledViewRef.current = false;
             setZoomScale(1.0);
+            return;
+        }
+
+        const highlightKey = [
+            activeHighlight.fileId,
+            activeHighlight.fileName,
+            activeHighlight.page,
+            activeHighlight.columnKey,
+            activeHighlight.rawValue,
+            activeHighlight.box_2d?.join(","),
+        ].join("::");
+        if (lastHighlightRef.current !== highlightKey) {
+            lastHighlightRef.current = highlightKey;
+            userControlledViewRef.current = false;
+        } else if (userControlledViewRef.current) {
             return;
         }
 
@@ -471,8 +504,9 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     );
                 })()}
 
-                {/* Floating Zoom & Annotation Control Pill */}
-                <div className="absolute top-3 right-3 z-40 flex items-center gap-1 bg-background/90 backdrop-blur-md border px-2 py-1 rounded-full shadow-md text-xs w-fit">
+                {/* Sticky controls stay visible while auto-focus scrolls the document. */}
+                <div className="sticky top-3 z-40 h-0 flex justify-end pr-3 pointer-events-none">
+                <div className="flex items-center gap-1 bg-background/95 backdrop-blur-md border px-2 py-1 rounded-full shadow-md text-xs w-fit pointer-events-auto">
                     <button
                         type="button"
                         onClick={() => setShowBadge(v => !v)}
@@ -488,7 +522,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     <div className="h-3 w-px bg-border/60 mx-0.5" />
                     <button
                         type="button"
-                        onClick={() => setZoomScale(s => Math.max(0.6, Number((s - 0.25).toFixed(2))))}
+                        onClick={() => setManualZoom(s => Math.max(0.5, Number((s - 0.25).toFixed(2))))}
                         className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors"
                         title="Уменьшить (-)"
                     >
@@ -499,22 +533,21 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     </span>
                     <button
                         type="button"
-                        onClick={() => setZoomScale(s => Math.min(4.0, Number((s + 0.25).toFixed(2))))}
+                        onClick={() => setManualZoom(s => Math.min(4.0, Number((s + 0.25).toFixed(2))))}
                         className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors"
                         title="Увеличить (+)"
                     >
                         <ZoomIn className="w-3.5 h-3.5" />
                     </button>
-                    {zoomScale !== 1.0 && (
-                        <button
-                            type="button"
-                            onClick={() => setZoomScale(1.0)}
-                            className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors ml-0.5 border-l pl-1.5"
-                            title="Сбросить масштаб (100%)"
-                        >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                        </button>
-                    )}
+                    <button
+                        type="button"
+                        onClick={showWholeDocument}
+                        className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors ml-0.5 border-l pl-1.5"
+                        title="Показать весь документ"
+                    >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                </div>
                 </div>
 
                 {/* Main Render Area */}
@@ -532,16 +565,18 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                             </div>
                             <label className="cursor-pointer inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground text-xs font-semibold rounded-lg shadow-sm hover:bg-primary/90 transition-all w-full">
                                 <Upload className="w-4 h-4" />
-                                <span>Выбрать файл документа</span>
+                                <span>{isBatchMode ? "Выбрать файлы пакета" : "Выбрать файл документа"}</span>
                                 <input
                                     type="file"
                                     accept="image/*,application/pdf"
+                                    multiple={isBatchMode}
                                     className="hidden"
                                     onChange={(e) => {
-                                        const f = e.target.files?.[0];
-                                        if (f) {
+                                        const selected = Array.from(e.target.files || []);
+                                        if (selected.length > 0) {
                                             setImageError(false);
-                                            onFileReplaced?.(f);
+                                            if (isBatchMode) onBatchFilesReplaced?.(selected);
+                                            else onFileReplaced?.(selected[0]);
                                         }
                                     }}
                                 />

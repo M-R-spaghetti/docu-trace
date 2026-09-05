@@ -399,6 +399,34 @@ export default function Home() {
     updateHistory(sessId, { file: newFile }).catch(console.error);
   }, [activeSession, updateSession]);
 
+  const handleActiveSessionBatchFilesChange = useCallback((newFiles: File[]) => {
+    if (!activeSession) return;
+    const sessId = activeSession.id;
+    const byName = new Map(newFiles.map(file => [file.name.toLowerCase(), file]));
+    const updatedRows = (activeSession.batchRows || []).map(row => ({
+      ...row,
+      file: byName.get(row.fileName.toLowerCase()) || row.file,
+    }));
+    const primaryFile = byName.get(activeSession.file?.name.toLowerCase() || "") || newFiles[0] || activeSession.file;
+
+    updateSession(sessId, {
+      file: primaryFile,
+      batchFileObjects: newFiles,
+      batchRows: updatedRows,
+      batchFiles: newFiles.map(file => ({ name: file.name, size: file.size })),
+    });
+    updateHistory(sessId, {
+      file: primaryFile || undefined,
+      batchFiles: newFiles,
+      batchRows: updatedRows.map(row => ({ ...row, file: undefined })),
+      batchInfo: {
+        totalFiles: newFiles.length,
+        fileNames: newFiles.map(file => file.name),
+        fileSizes: newFiles.map(file => file.size),
+      },
+    }).catch(console.error);
+  }, [activeSession, updateSession]);
+
   const handleRetryActiveSessionFailedBatch = async () => {
     if (!activeSession || !activeSession.batchRows || !activeSession.batchSchema || activeSession.isProcessingBatch) return;
     const sessId = activeSession.id;
@@ -589,6 +617,7 @@ export default function Home() {
                   onRefine={handleRefineActiveSession}
                   onDataChange={handleActiveSessionDataChange}
                   onFileChange={handleActiveSessionFileChange}
+                  onBatchFilesChange={handleActiveSessionBatchFilesChange}
                   verificationState={activeSession.verificationState}
                   streamingProgress={activeSession.streamingProgress}
                   batchFiles={activeSession.batchFiles}

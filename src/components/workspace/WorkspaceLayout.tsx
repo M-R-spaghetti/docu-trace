@@ -27,6 +27,7 @@ interface WorkspaceLayoutProps {
     onRefine?: (newPrompt: string) => Promise<void>;
     onDataChange?: (updatedExtracted: any, updatedVerificationState: VerificationStateMap) => void;
     onFileChange?: (file: File) => void;
+    onBatchFilesChange?: (files: File[]) => void;
     verificationState?: VerificationStateMap;
     streamingProgress?: StreamingProgress | null;
     batchFiles?: { name: string; size: number }[];
@@ -45,6 +46,7 @@ export function WorkspaceLayout({
     onRefine,
     onDataChange,
     onFileChange,
+    onBatchFilesChange,
     verificationState,
     streamingProgress,
     batchFiles,
@@ -81,6 +83,18 @@ export function WorkspaceLayout({
     const handleFileReplaced = (newFile: File) => {
         setSelectedBatchFile(newFile);
         onFileChange?.(newFile);
+    };
+
+    const handleBatchFilesReplaced = (newFiles: File[]) => {
+        const clean = (value: string) => value.split('/').pop()?.split('\\').pop()?.toLowerCase().trim() || "";
+        const replacements = new Map(newFiles.map(candidate => [clean(candidate.name), candidate]));
+        const merged = (batchFileObjects || []).map(existing => replacements.get(clean(existing.name)) || existing);
+        for (const candidate of newFiles) {
+            if (!merged.some(existing => clean(existing.name) === clean(candidate.name))) merged.push(candidate);
+        }
+        const currentReplacement = replacements.get(clean(selectedBatchFile?.name || ""));
+        if (currentReplacement) setSelectedBatchFile(currentReplacement);
+        onBatchFilesChange?.(merged);
     };
 
     const handleSetActiveHighlight = (hl: ActiveHighlight | null) => {
@@ -381,6 +395,7 @@ export function WorkspaceLayout({
                     activeHighlight={activeHighlight}
                     batchFiles={batchFileObjects}
                     onFileReplaced={handleFileReplaced}
+                    onBatchFilesReplaced={handleBatchFilesReplaced}
                 />
             </div>
 
