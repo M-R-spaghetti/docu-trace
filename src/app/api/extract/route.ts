@@ -2,13 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { acquireApiRequest, safeHttpStatus, validatePrompt } from "@/lib/server/requestGuard";
 import { ALLOWED_MIME_TYPES } from "@/lib/media";
+import { getUploadLimits } from "@/lib/uploadLimits";
+import { buildArchitectPrompt } from "@/lib/server/prompts";
+import { createRequestDeadline, generateContentWithFallback, remainingRequestTime } from "@/lib/server/gemini";
 
 // Max duration for Vercel Serverless execution (up to 60s for Pro/Enterprise)
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 // Keep the default below common serverless request-body limits. Self-hosted deployments may override it.
-const MAX_PAYLOAD_BYTES = (Number(process.env.MAX_FILE_SIZE_MB) || 4) * 1024 * 1024;
+const MAX_PAYLOAD_BYTES = getUploadLimits().maxPreparedRequestBytes;
 
 let _ai: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
@@ -24,57 +27,6 @@ function getAI(): GoogleGenAI {
     }
     return _ai;
 }
-
-const ARCHITECT_PROMPT = `Ты — Senior Data Architect и эксперт по интеллектуальному анализу документов ЛЮБЫХ типов (договоры, финансовые отчеты, банковские выписки, накладные, счета, чеки, техническая документация, медицинские карты, анкеты, паспорта).
-
-Твоя задача: проанализировать текстовый запрос пользователя и создать строгую, лаконичную и релевантную структуру данных (JSON Schema) для извлечения информации.
-
-КРИТИЧЕСКОЕ ПРАВИЛО КОРНЯ СХЕМЫ (ROOT OBJECT):
-Корень схемы (root schema) ВСЕГДА ОБЯЗАН иметь "type": "object" со свойством "properties".
-КОРЕНЬ НИКОГДА НЕ ДОЛЖЕН БЫТЬ "type": "array".
-Если пользователь запрашивает список, таблицу, позиции, чеки, транзакции или массив записей, этот массив ДОЛЖЕН быть свойством корневого объекта (например, "items", "transactions", "records" и т.д.):
-{
-  "type": "object",
-  "properties": {
-    "items": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": { ... }
-      }
-    }
-  },
-  "required": ["items"]
-}
-
-КРИТИЧЕСКОЕ ПРАВИЛО ФОРМАТА ПОЛЕЙ:
-Каждое конечное (leaf) поле, в которое будет записано извлечённое значение, ОБЯЗАНО быть объектом со следующей структурой:
-{
-  "value": <извлечённое значение — строка или число>,
-  "box_2d": [ymin, xmin, ymax, xmax],
-  "page": <номер страницы, начиная с 1>
-}
-
-Где box_2d — это координаты прямоугольника на документе, нормализованные от 0 до 1000 (0 = верхний/левый край, 1000 = нижний/правый край).
-Порядок координат: [ymin, xmin, ymax, xmax] — ИМЕННО В ТАКОМ ПОРЯДКЕ (сначала Y, потом X).
-
-ПРАВИЛА:
-1. УНИВЕРСАЛЬНОСТЬ ПОД ЛЮБОЙ ТИП ДОКУМЕНТА:
-   - Договоры / Соглашения: извлекай стороны (parties), предмет (subject), срок действия (duration), обязательства (liabilities), реквизиты, подписи.
-   - Банковские выписки: извлекай номер счета, начальный/конечный остаток, дату, таблицу транзакций (дата, контрагент, назначение, сумма).
-   - Чеки / Накладные: извлекай таблицу позиций, цены, суммы, если они запрошены.
-   - Специфический поиск по промпту: например, "Найди только пункт о расторжении и штрафах" — извлекай ТОЛЬКО пункт о расторжении и штрафах.
-
-2. СТРОГОЕ СЛЕДОВАНИЕ ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ (НИКАКИХ ЛИШНИХ НЕЗАПРОШЕННЫХ ДАННЫХ):
-   - Если пользователь просит найти конкретную информацию (например: "только таблица позиций без шапки", "только стороны договора", "только итоговая сумма", "только номер полиса") — создавай схему ИСКЛЮЧИТЕЛЬНО для этих данных!
-   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО самовольно добавлять блоки вроде header_information, store_name, metadata, если пользователь этого не просил или прямо попросил не добавлять.
-
-3. СТРОГИЙ СТАНДАРТ: Твоя схема должна быть чистым подмножеством OpenAPI 3.0 / JSON Schema, совместимым с Google Gemini API. Используй стандартные поля: "type", "properties", "items", "required", "description". НЕ используй $schema, $id, additionalProperties, title, pattern, anyOf, oneOf.
-4. КАЖДОЕ конечное (leaf) поле оборачивается в {value, box_2d, page}. Без исключений.
-5. ДОКУМЕНТИРОВАНИЕ: Каждое поле должно содержать подробный description на языке запроса пользователя.
-6. Поле markdown_text (если запрошен текстовый отчёт) — это ЕДИНСТВЕННОЕ исключение. Оно остаётся простой строкой без box_2d.
-
-Выдавай ТОЛЬКО валидный JSON Schema, без каких-либо вводных слов, маркдаун-тегов или объяснений. Твой ответ пойдет напрямую в парсер.`;
 
 /**
  * Sanitizes an arbitrary JSON schema into a strict OpenAPI 3.0 schema
@@ -217,44 +169,10 @@ function mergeCorrectedCoordinates(original: any, corrected: any): any {
     return original;
 }
 
-async function generateContentWithModelFallback(ai: any, requestConfig: any) {
-    const candidateModels = Array.from(new Set([
-        process.env.GEMINI_MODEL || "gemini-2.5-flash",
-        "gemini-flash-latest",
-        "gemini-flash-lite-latest",
-    ]));
-
-    let lastError: any = null;
-    for (const model of candidateModels) {
-        try {
-            console.log(`[Model Engine] Requesting model: ${model}...`);
-            return await ai.models.generateContent({
-                ...requestConfig,
-                model,
-                config: {
-                    ...requestConfig.config,
-                    httpOptions: {
-                        ...requestConfig.config?.httpOptions,
-                        timeout: 22_000,
-                    },
-                },
-            });
-        } catch (err: any) {
-            lastError = err;
-            const status = Number(err?.status ?? err?.error?.status ?? err?.error?.code ?? err?.code);
-            const message = String(err?.message || "");
-            const canFallback = [404, 429, 503].includes(status)
-                || /model.*not found|resource_exhausted|temporarily unavailable|timeout/i.test(message);
-            if (!canFallback) throw err;
-            console.warn(`[Model Fallback] Model ${model} temporarily unavailable (${message || status}).`);
-        }
-    }
-    throw lastError;
-}
-
 export async function POST(req: NextRequest) {
     const guard = acquireApiRequest(req, "extract");
     if (guard.response) return guard.response;
+    const deadline = createRequestDeadline(55_000);
     try {
         const formData = await req.formData();
         const file = formData.get("file") as File | null;
@@ -305,33 +223,22 @@ export async function POST(req: NextRequest) {
         }
 
         if (!generatedSchema) {
-            let formatInstructions = "";
-            if (format === "table") {
-                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Пользователь запросил только таблицу (Strict Data). Твоя JSON Schema ОДНОЗНАЧНО должна описывать структуру для извлечения массивов и четких ключей. Каждое leaf-поле — объект {value, box_2d, page}.`;
-            } else if (format === "report") {
-                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Пользователь запросил текстовый отчет (Report). Твоя JSON Schema должна содержать поле 'markdown_text' (простая строка) для структурированного ответа в формате Markdown. Это единственное поле, которое НЕ оборачивается в {value, box_2d, page}.`;
-            } else if (format === "hybrid") {
-                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Гибрид (Summary + Data). JSON Schema должна содержать поле 'markdown_text' (простая строка) для саммари, а также массивы/объекты для извлечения данных с координатами {value, box_2d, page}.`;
-            } else {
-                formatInstructions = `\nОЖИДАЕМЫЙ ФОРМАТ: Авто (Auto). Самостоятельно реши, что лучше: 'markdown_text' с отчетом, табличные массивы с координатами {value, box_2d, page}, или и то и другое.`;
-            }
-
             console.log("Step 1: Architect generating schema for query:", userQuery, "format:", format);
 
             // Step 1: Generate JSON Schema with strict JSON mode and model fallback
-            const schemaResponse = await generateContentWithModelFallback(ai, {
+            const schemaResponse = await generateContentWithFallback(ai, {
                 contents: [
                     {
                         role: "user",
                         parts: [
-                            { text: ARCHITECT_PROMPT + formatInstructions + "\n\nЗАПРОС ПОЛЬЗОВАТЕЛЯ:\n" + userQuery }
+                            { text: buildArchitectPrompt(userQuery, format) }
                         ]
                     }
                 ],
                 config: {
                     responseMimeType: "application/json",
                 }
-            });
+            }, { deadline, label: "Schema Engine", perCallTimeoutMs: 18_000 });
 
             let schemaText = schemaResponse.text || "{}";
             schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
@@ -364,7 +271,7 @@ export async function POST(req: NextRequest) {
 
         let extractionText = "{}";
         try {
-            const extractionResponse = await generateContentWithModelFallback(ai, {
+            const extractionResponse = await generateContentWithFallback(ai, {
                 contents: [
                     {
                         role: "user",
@@ -383,7 +290,7 @@ export async function POST(req: NextRequest) {
                     responseMimeType: "application/json",
                     responseSchema: sanitizedSchema,
                 }
-            });
+            }, { deadline, label: "Extraction Engine" });
             extractionText = extractionResponse.text || "{}";
         } catch (schemaErr: any) {
             console.warn(
@@ -391,7 +298,7 @@ export async function POST(req: NextRequest) {
                 schemaErr?.message || schemaErr
             );
             // Resilient fallback without responseSchema
-            const fallbackResponse = await generateContentWithModelFallback(ai, {
+            const fallbackResponse = await generateContentWithFallback(ai, {
                 contents: [
                     {
                         role: "user",
@@ -409,7 +316,7 @@ export async function POST(req: NextRequest) {
                 config: {
                     responseMimeType: "application/json",
                 }
-            });
+            }, { deadline, label: "Extraction Recovery" });
             extractionText = fallbackResponse.text || "{}";
         }
 
@@ -433,6 +340,10 @@ export async function POST(req: NextRequest) {
         // numerically valid while pointing to empty space, which cannot be
         // detected by geometry checks in the browser.
         try {
+            if (remainingRequestTime(deadline) < 10_000) {
+                console.warn("Skipping coordinate grounding: less than 10s remains in request budget.");
+                return NextResponse.json({ schema: generatedSchema, data: extractionResult }, { status: 200 });
+            }
             const groundingPrompt = `Повторно проверь ТОЛЬКО пространственную привязку уже извлечённых данных на документе.
 Найди каждое указанное значение на полном исходном документе и верни ту же JSON-структуру.
 Значения запрещено исправлять, переводить, нормализовать или переставлять.
@@ -450,7 +361,7 @@ box_2d имеет порядок [ymin, xmin, ymax, xmax], диапазон 0..1
 ДАННЫЕ ДЛЯ ПОВТОРНОЙ ПРИВЯЗКИ:
 ${JSON.stringify(extractionResult)}`;
 
-            const groundingResponse = await generateContentWithModelFallback(ai, {
+            const groundingResponse = await generateContentWithFallback(ai, {
                 contents: [{
                     role: "user",
                     parts: [
@@ -462,7 +373,7 @@ ${JSON.stringify(extractionResult)}`;
                     responseMimeType: "application/json",
                     responseSchema: sanitizedSchema,
                 },
-            });
+            }, { deadline, label: "Coordinate Grounding", perCallTimeoutMs: 18_000 });
 
             const corrected = JSON.parse(groundingResponse.text || "{}");
             extractionResult = mergeCorrectedCoordinates(extractionResult, corrected);

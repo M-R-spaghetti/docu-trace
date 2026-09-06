@@ -76,7 +76,8 @@ function downloadBlob(blob: Blob, filename: string) {
 
 export function escapeCSVValue(val: any): string {
     let raw = String(val ?? '');
-    if (/^[=+\-@\t\r]/.test(raw)) raw = `'${raw}`;
+    const isPlainNumber = /^-?\d+(?:[.,]\d+)?$/.test(raw.trim());
+    if (!isPlainNumber && /^[=+\-@\t\r]/.test(raw)) raw = `'${raw}`;
     const cleaned = raw.replace(/"/g, '""');
     if (
         cleaned.includes(';') ||

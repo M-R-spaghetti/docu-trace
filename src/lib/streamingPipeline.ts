@@ -1,4 +1,5 @@
 import { slicePdfChunks, remapExtractedChunkPages, mergeExtractedData, PdfChunk, createChunkFromImageFiles } from "./pdfStitcher";
+import { getUploadLimits } from "./uploadLimits";
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -122,6 +123,10 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
             chunk = await createChunkFromImageFiles(chunkImages, plan.startIdx, chunkIdx + 1);
         } else {
             chunk = precomputedChunks![chunkIdx];
+        }
+
+        if (chunk.chunkFile.size > getUploadLimits().maxPreparedRequestBytes) {
+            throw new Error(`Часть PDF ${chunk.startPage}–${chunk.endPage} превышает лимит 4 МБ. Уменьшите размер PDF или загрузите страницы отдельными файлами.`);
         }
 
         if (opts.onChunkStart) {

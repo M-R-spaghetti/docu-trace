@@ -1,7 +1,7 @@
-import { optimizeImageFile } from "@/lib/media";
+import { optimizeImageFile } from "../media";
 import { createLimiter, mapWithConcurrency } from "./limiter";
 import { withRetry, HttpError } from "./retry";
-import { saveHistory } from "@/lib/db";
+import { saveHistory } from "../db";
 
 export type JobStatus = "queued" | "preparing" | "extracting" | "done" | "failed" | "skipped";
 
@@ -23,6 +23,11 @@ export interface BatchProgress {
     skipped: number;
     active: number;
     percent: number;
+}
+
+export function isDocumentTotalKey(key: string): boolean {
+    const normalized = key.toLowerCase().replace(/[^a-zа-яё0-9]+/gi, "_");
+    return /(^|_)(grand_total|total_amount|amount_due|net_total|invoice_total|receipt_total|total|sum|сума|сумма|разом)(_|$)/i.test(normalized);
 }
 
 /**
@@ -283,9 +288,9 @@ export function compileMasterRows(jobs: BatchJob[]): {
             columnSet.add(k);
 
             // Attempt to sum total
-            if (/total|amount|сума/i.test(k) && typeof display === 'number') {
+            if (isDocumentTotalKey(k) && typeof display === 'number') {
                 totalAmount += display;
-            } else if (/total|amount|сума/i.test(k) && typeof display === 'string') {
+            } else if (isDocumentTotalKey(k) && typeof display === 'string') {
                 const parsed = parseFloat(display.replace(/[^\d.-]/g, ''));
                 if (!isNaN(parsed)) totalAmount += parsed;
             }

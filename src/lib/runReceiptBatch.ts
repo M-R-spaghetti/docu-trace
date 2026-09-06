@@ -4,6 +4,7 @@ import { withRetry, HttpError } from "./batch/retry";
 import { saveHistory } from "./db";
 import { DocRow } from "./batchTypes";
 import { generateFileId, auditReceiptDoc } from "./review";
+import { getUploadLimits } from "./uploadLimits";
 
 export interface RunReceiptBatchOptions {
     prompt?: string;
@@ -39,6 +40,9 @@ async function extractOne(
     try {
         // 1. Pre-compress to ~1500px, 0.78 quality (~60KB)
         const prepared = await optimizeImageFile(file, 1500, 0.78, true);
+        if (prepared.size > getUploadLimits().maxPreparedRequestBytes) {
+            throw new Error(`Prepared document ${file.name} exceeds the 4MB request limit.`);
+        }
 
         // 2. Execute rate-limited with exponential backoff & 429 Retry-After
         return await limiter(() =>

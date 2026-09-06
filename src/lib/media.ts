@@ -1,4 +1,5 @@
 import { formatBytes } from "@/lib/utils";
+import { getUploadLimits } from "@/lib/uploadLimits";
 
 export const ALLOWED_MIME_TYPES = new Set([
     "application/pdf",
@@ -8,12 +9,11 @@ export const ALLOWED_MIME_TYPES = new Set([
     "image/webp"
 ]);
 
-export const VERCEL_PAYLOAD_LIMIT_BYTES = 4.5 * 1024 * 1024; // 4.5 MB
-
 /**
  * Validates document type and size constraints prior to processing.
  */
 export function validateDocumentFile(file: File): { valid: boolean; error?: string } {
+    const limits = getUploadLimits();
     if (!file) {
         return { valid: false, error: "No file selected." };
     }
@@ -29,13 +29,29 @@ export function validateDocumentFile(file: File): { valid: boolean; error?: stri
     }
 
     // Multi-page PDFs are automatically sliced into lightweight streaming chunks
-    if (file.size > 50 * 1024 * 1024) {
+    if (file.size > limits.maxSourceFileBytes) {
         return {
             valid: false,
-            error: `File is too large (${formatBytes(file.size)}). Maximum supported upload is 50MB.`
+            error: `Файл слишком большой (${formatBytes(file.size)}). Максимум — ${formatBytes(limits.maxSourceFileBytes)}.`
         };
     }
 
+    return { valid: true };
+}
+
+export function validateDocumentBatch(files: File[]): { valid: boolean; error?: string } {
+    const limits = getUploadLimits();
+    if (files.length > limits.maxBatchFiles) {
+        return { valid: false, error: `В одном пакете можно загрузить не более ${limits.maxBatchFiles} документов.` };
+    }
+    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+    if (totalBytes > limits.maxBatchSourceBytes) {
+        return { valid: false, error: `Пакет слишком большой (${formatBytes(totalBytes)}). Максимум — ${formatBytes(limits.maxBatchSourceBytes)}.` };
+    }
+    for (const file of files) {
+        const result = validateDocumentFile(file);
+        if (!result.valid) return { valid: false, error: `${file.name}: ${result.error}` };
+    }
     return { valid: true };
 }
 
@@ -47,7 +63,7 @@ export function validateDocumentFile(file: File): { valid: boolean; error?: stri
  */
 export async function optimizeImageFile(
     file: File,
-    maxDimension = 2048,
+    maxDimension = getUploadLimits().maxImageDimension,
     quality = 0.85,
     force = false
 ): Promise<File> {

@@ -666,10 +666,10 @@ export function BatchDataTable({
     return (
         <div className="w-full h-full flex flex-col bg-card border rounded-xl overflow-hidden shadow-sm">
             {/* Header & Metrics */}
-            <div className="p-3.5 pr-12 border-b bg-muted/20 space-y-3 shrink-0">
+            <div className="p-4 border-b bg-muted/20 space-y-3 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
                     <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                             <h3 className="font-bold text-base tracking-tight text-foreground truncate">
                                 Проверка данных
                             </h3>
@@ -1475,15 +1475,7 @@ export function BatchDataTable({
                                                                             />
                                                                         </div>
                                                                     ) : (
-                                                                        <div className={`flex items-center gap-1 group/val ${alignClass === "text-right" ? "justify-end" : "justify-between"}`}>
-                                                                            {/* Micro-dot Coordinate Indicator */}
-                                                                            {hasBox && (
-                                                                                <span
-                                                                                    className="w-1.5 h-1.5 rounded-full bg-amber-400/80 shrink-0"
-                                                                                    title="Координаты найдены на чеке"
-                                                                                />
-                                                                            )}
-
+                                                                        <div className={`flex items-center gap-2 group/val ${alignClass === "text-right" ? "justify-end" : "justify-start"}`}>
                                                                             {/* Formatted Value */}
                                                                             <span className={`truncate text-sm leading-5 ${colType === "money" || colType === "qty" ? "tabular-nums" : ""} ${isEmpty ? "text-amber-500 italic" : "text-foreground"}`}>
                                                                                 {colType === "date" && parsedDate ? (
@@ -1519,7 +1511,7 @@ export function BatchDataTable({
                                                                                         setEditingCell({ rowId: fr.fileId, path });
                                                                                         setEditValue(cellVal === "—" ? "" : cellVal);
                                                                                     }}
-                                                                                    className="p-0.5 rounded opacity-0 group-hover/cell:opacity-100 hover:bg-muted text-muted-foreground hover:text-foreground transition-opacity"
+                                                                                    className="p-2 rounded hover:bg-muted text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
                                                                                 >
                                                                                     <Pencil className="w-2.5 h-2.5" />
                                                                                 </button>
@@ -1533,7 +1525,7 @@ export function BatchDataTable({
                                                                                         if (onConfirmCell) onConfirmCell(fr.fileId, path);
                                                                                         else if (onToggleVerifyCell) onToggleVerifyCell(fr.fileId, path);
                                                                                     }}
-                                                                                    className={`p-0.5 rounded opacity-0 group-hover/cell:opacity-100 hover:bg-muted transition-opacity ${
+                                                                                    className={`p-2 rounded hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring ${
                                                                                         human === "confirmed"
                                                                                             ? "text-emerald-600 font-bold"
                                                                                             : "text-muted-foreground"

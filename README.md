@@ -33,7 +33,6 @@ An intelligent document analysis and data extraction platform powered by Google 
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
    GEMINI_MODEL=gemini-2.5-flash
-   MAX_FILE_SIZE_MB=4
    ```
 
    For a private deployment, also protect the entire site and API:
@@ -53,7 +52,8 @@ An intelligent document analysis and data extraction platform powered by Google 
 
 - **Vercel Serverless Execution Timeout**: The extraction route is configured with `export const maxDuration = 60` to accommodate multi-page documents and spatial vision extraction. Ensure your deployment tier supports functions up to 60 seconds (Vercel Pro or custom server).
 - **Payload & Image Compression**: The default API limit is 4MB to stay below common serverless request-body limits. DocuTrace compresses large camera scans client-side to 2048px before transmission. Compression is lossy and may affect very small text; keep original scans available for human verification.
-- **PDF Constraints**: PDFs should be under 4.5MB when deployed on Vercel. For self-hosted Docker deployments, the limit can be increased via the `MAX_FILE_SIZE_MB` environment variable.
+- **PDF Constraints**: Source PDFs may be up to 25MB and are split into smaller requests. Every generated request chunk must stay below 4MB.
+- **Batch Constraints**: Up to 100 source documents and 500MB total per package. All limits are defined centrally in `src/lib/uploadLimits.ts`, ready for future free/paid plan profiles.
 - **Abuse protection**: API routes apply per-IP burst, sustained-rate, and concurrent-request limits. The built-in limiter is per application instance; use a shared Redis-backed limiter before running many server instances.
 
 ## Privacy & Data Handling

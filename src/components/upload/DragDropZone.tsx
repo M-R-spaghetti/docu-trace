@@ -6,7 +6,8 @@ import { useDropzone, FileRejection } from "react-dropzone";
 import { motion, AnimatePresence } from "framer-motion";
 import { UploadCloud, File, AlertCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { validateDocumentFile, optimizeImageFile } from "@/lib/media";
+import { validateDocumentBatch, validateDocumentFile, optimizeImageFile } from "@/lib/media";
+import { getUploadLimits } from "@/lib/uploadLimits";
 
 interface DragDropZoneProps {
     onFileAccepted: (file: File) => void;
@@ -14,6 +15,7 @@ interface DragDropZoneProps {
 }
 
 export function DragDropZone({ onFileAccepted, onFilesAccepted }: DragDropZoneProps) {
+    const limits = getUploadLimits();
     const [error, setError] = useState<string | null>(null);
     const [isOptimizing, setIsOptimizing] = useState(false);
 
@@ -27,6 +29,11 @@ export function DragDropZone({ onFileAccepted, onFilesAccepted }: DragDropZonePr
         if (acceptedFiles && acceptedFiles.length > 0) {
             // If multiple files dropped and batch mode is supported
             if (acceptedFiles.length > 1 && onFilesAccepted) {
+                const validation = validateDocumentBatch(acceptedFiles);
+                if (!validation.valid) {
+                    setError(validation.error || "Некорректный пакет документов.");
+                    return;
+                }
                 setError(null);
                 onFilesAccepted(acceptedFiles);
                 return;
@@ -63,7 +70,8 @@ export function DragDropZone({ onFileAccepted, onFilesAccepted }: DragDropZonePr
             'image/*': ['.png', '.jpg', '.jpeg', '.webp']
         },
         multiple: true,
-        maxSize: 25 * 1024 * 1024,
+        maxSize: limits.maxSourceFileBytes,
+        maxFiles: limits.maxBatchFiles,
     });
 
     return (

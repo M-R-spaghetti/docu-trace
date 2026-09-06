@@ -7,7 +7,8 @@ import { setByPath, explodeDoc } from "@/lib/flatten";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
 import { BatchDataTable } from "./BatchDataTable";
-import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, FileText, Search, X, Sparkles, ChevronUp, Crosshair, ArrowLeft } from "lucide-react";
+import { WorkspaceAssistant } from "./WorkspaceAssistant";
+import { PanelRightClose, PanelRightOpen, GripVertical, Maximize2, Minimize2, Files, FileText, Search, X, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSessionContext } from "@/lib/sessionContext";
 
@@ -65,7 +66,6 @@ export function WorkspaceLayout({
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const [isFloating, setIsFloating] = useState(false);
     const [isFilesDrawerOpen, setIsFilesDrawerOpen] = useState(false);
-    const [isAiOpen, setIsAiOpen] = useState(false);
     const [filesFilter, setFilesFilter] = useState("");
     const [sidebarWidth, setSidebarWidth] = useState(() => {
         if (typeof window !== "undefined") {
@@ -158,17 +158,18 @@ export function WorkspaceLayout({
     const isDragging = useRef(false);
 
     const onPointerDown = (e: React.PointerEvent) => {
+        const bounds = e.currentTarget.parentElement?.getBoundingClientRect();
+        if (!bounds) return;
+        e.preventDefault();
         isDragging.current = true;
         document.body.style.cursor = 'col-resize';
         document.body.style.userSelect = 'none';
 
         const onPointerMove = (e: PointerEvent) => {
             if (!isDragging.current) return;
-            const newWidth = document.body.clientWidth - e.clientX - 32;
-            const maxW = Math.max(620, window.innerWidth * 0.55);
-            if (newWidth > 420 && newWidth < maxW) {
-                setSidebarWidth(newWidth);
-            }
+            const newWidth = bounds.right - e.clientX;
+            const maxW = bounds.width * 0.6;
+            setSidebarWidth(Math.min(maxW, Math.max(360, newWidth)));
         };
 
         const onPointerUp = () => {
@@ -184,9 +185,9 @@ export function WorkspaceLayout({
     };
 
     return (
-        <div className="w-full h-[calc(100vh-6rem)] max-w-none flex flex-col relative gap-2 bg-background p-2 rounded-xl">
+        <div className="workspace-shell w-full h-[calc(100dvh-6rem)] max-w-none flex flex-col relative gap-3 bg-background p-2 rounded-xl">
             {/* Top Workspace Navigation Bar */}
-            <div className="w-full h-9 px-3 bg-muted/30 border border-border/60 rounded-lg flex items-center justify-between text-xs shrink-0">
+            <div className="w-full min-h-12 py-2 px-3 bg-muted/30 border border-border/60 rounded-lg flex flex-wrap gap-2 items-center justify-between text-sm shrink-0">
                 <div className="flex items-center gap-2.5 min-w-0">
                     <Button
                         variant="ghost"
@@ -283,7 +284,7 @@ export function WorkspaceLayout({
                 </div>
             )}
 
-            <div className="w-full flex-1 flex relative gap-2 overflow-hidden">
+            <div className="workspace-panes w-full min-h-0 flex-1 flex relative gap-2 overflow-hidden">
                 {/* Collapsible Batch Files Sidebar */}
                 {isFilesDrawerOpen && batchFiles && batchFiles.length > 1 && (
                     <div className="w-72 h-full border rounded-xl bg-card flex flex-col shrink-0 overflow-hidden shadow-sm animate-in slide-in-from-left duration-200">
@@ -362,7 +363,7 @@ export function WorkspaceLayout({
 
                 {/* Main Canvas: Document Viewer */}
                 <div
-                    className={`h-full flex flex-col transition-all duration-300 relative rounded-xl overflow-hidden shadow-sm border min-w-0 ${!isFloating && isSidebarOpen ? 'flex-1' : 'w-full'
+                    className={`workspace-document h-full flex flex-col relative rounded-xl overflow-hidden shadow-sm border min-w-0 ${!isFloating && isSidebarOpen ? 'flex-1' : 'w-full'
                         }`}
                 >
                 <div className="absolute bottom-4 right-4 z-50 flex gap-2">
@@ -372,7 +373,8 @@ export function WorkspaceLayout({
                             size="icon"
                             onClick={() => setIsFloating(true)}
                             className="shadow-md border"
-                            title="Float Data Panel"
+                            title="Открыть данные отдельной панелью"
+                            aria-label="Открыть данные отдельной панелью"
                         >
                             <Minimize2 className="w-4 h-4" />
                         </Button>
@@ -383,7 +385,8 @@ export function WorkspaceLayout({
                             size="icon"
                             onClick={() => { setIsSidebarOpen(true); setIsFloating(false); }}
                             className="shadow-md border bg-primary/10 text-primary hover:bg-primary/20"
-                            title="Show Sidebar"
+                            title="Показать данные рядом"
+                            aria-label="Показать данные рядом"
                         >
                             <PanelRightOpen className="w-5 h-5" />
                         </Button>
@@ -402,7 +405,18 @@ export function WorkspaceLayout({
             {/* Resizer Handle */}
             {isSidebarOpen && !isFloating && (
                 <div
-                    className="w-3 flex items-center justify-center cursor-col-resize hover:bg-muted transition-colors group z-10 rounded-md"
+                    className="workspace-resizer w-3 shrink-0 flex items-center justify-center cursor-col-resize hover:bg-muted transition-colors group z-10 rounded-md"
+                    role="separator"
+                    aria-label="Ширина панели данных"
+                    aria-orientation="vertical"
+                    aria-valuenow={sidebarWidth}
+                    tabIndex={0}
+                    onKeyDown={event => {
+                        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+                            event.preventDefault();
+                            setSidebarWidth(width => Math.max(360, Math.min(window.innerWidth * 0.6, width + (event.key === 'ArrowLeft' ? 32 : -32))));
+                        }
+                    }}
                     onPointerDown={onPointerDown}
                 >
                     <GripVertical className="h-6 w-6 text-muted-foreground opacity-30 group-hover:opacity-100" />
@@ -412,20 +426,22 @@ export function WorkspaceLayout({
             {/* Right Pane: Extracted Data Sidebar */}
             {isSidebarOpen && (
                 <div
-                    className={`h-full flex flex-col transition-shadow overflow-hidden ${isFloating
+                    className={`workspace-data relative min-w-0 h-full flex flex-col border rounded-xl bg-card transition-shadow overflow-hidden ${isFloating
                         ? 'fixed top-24 right-8 bottom-8 shadow-2xl border bg-background/95 backdrop-blur-xl rounded-xl z-50'
                         : 'flex-none'
                         }`}
                     style={{ width: `${sidebarWidth}px` }}
                 >
-                    <div className="absolute top-3 right-3 z-50 flex gap-1 bg-background/80 backdrop-blur-sm rounded-md p-1">
+                    <div className="flex shrink-0 items-center justify-end gap-1 border-b bg-muted/20 px-3 py-2">
+                        <span className="mr-auto text-xs font-medium text-muted-foreground">Работа с данными</span>
                         {isFloating && (
                             <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => setIsFloating(false)}
                                 className="h-8 w-8 hover:bg-muted"
-                                title="Dock to Sidebar"
+                                title="Закрепить рядом с документом"
+                                aria-label="Закрепить рядом с документом"
                             >
                                 <Maximize2 className="w-4 h-4" />
                             </Button>
@@ -435,7 +451,8 @@ export function WorkspaceLayout({
                             size="icon"
                             onClick={() => setIsSidebarOpen(false)}
                             className="h-8 w-8 hover:bg-muted"
-                            title="Close Sidebar"
+                            title="Скрыть панель данных"
+                            aria-label="Скрыть панель данных"
                         >
                             <PanelRightClose className="w-4 h-4 text-foreground/70" />
                         </Button>
@@ -589,66 +606,7 @@ export function WorkspaceLayout({
                         )}
                     </div>
 
-                    {/* Collapsible AI refinement assistant */}
-                    {onRefine && (
-                        <div className="w-full flex-none border-t bg-background relative z-20">
-                            <button
-                                type="button"
-                                onClick={() => setIsAiOpen(v => !v)}
-                                className="w-full h-10 px-3 flex items-center justify-between text-xs font-semibold hover:bg-muted/50 transition-colors"
-                                aria-expanded={isAiOpen}
-                            >
-                                <span className="flex items-center gap-2">
-                                    <Sparkles className="w-3.5 h-3.5 text-primary" />
-                                    Спросить AI о данных
-                                </span>
-                                <ChevronUp className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${isAiOpen ? "" : "rotate-180"}`} />
-                            </button>
-                            {isAiOpen && <div className="p-3 pt-0 space-y-2">
-                            {!isRefining && (
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="w-full h-9 gap-2 text-xs border-amber-500/30 text-amber-700 dark:text-amber-300 hover:bg-amber-500/10"
-                                    onClick={() => onRefine("Повторно найди все уже извлечённые значения на исходном документе и исправь их точные координаты box_2d. Сохрани структуру и значения данных без изменений.")}
-                                >
-                                    <Crosshair className="w-3.5 h-3.5" />
-                                    Обновить привязку к документу
-                                </Button>
-                            )}
-                            {isRefining ? (
-                                <div className="flex items-center justify-center h-10 rounded-md bg-primary/10 text-primary border border-primary/20 animate-pulse text-sm font-medium">
-                                    <Sparkles className="w-4 h-4 mr-2" />
-                                    AI повторно анализирует документ…
-                                </div>
-                            ) : (
-                                <form
-                                    className="flex gap-2"
-                                    onSubmit={(e) => {
-                                        e.preventDefault();
-                                        const form = e.target as HTMLFormElement;
-                                        const input = form.elements.namedItem('prompt') as HTMLInputElement;
-                                        if (input.value.trim()) {
-                                            onRefine(input.value.trim());
-                                            input.value = '';
-                                        }
-                                    }}
-                                >
-                                    <input
-                                        name="prompt"
-                                        placeholder="Например: исправь название поставщика…"
-                                        className="flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary flex-1 backdrop-blur-sm shadow-sm"
-                                        autoComplete="off"
-                                    />
-                                    <Button type="submit" size="sm" className="h-10 px-4 shadow-sm">
-                                        Отправить
-                                    </Button>
-                                </form>
-                            )}
-                            </div>}
-                        </div>
-                    )}
+                    {onRefine && <WorkspaceAssistant busy={isRefining} onRefine={onRefine} />}
                 </div>
             )}
             </div>

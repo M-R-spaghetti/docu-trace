@@ -10,7 +10,9 @@ function safeEqual(actual: string, expected: string): boolean {
 export function proxy(req: NextRequest) {
     const expectedUser = process.env.APP_BASIC_AUTH_USER;
     const expectedPassword = process.env.APP_BASIC_AUTH_PASSWORD;
-    if (!expectedUser || !expectedPassword) return NextResponse.next();
+    if (!expectedUser || !expectedPassword) {
+        return NextResponse.next();
+    }
 
     const authorization = req.headers.get("authorization") || "";
     if (authorization.startsWith("Basic ")) {

@@ -10,10 +10,8 @@ const POLICIES = {
     schema: { capacity: 3, refillPerMinute: 6, maxConcurrent: 2 },
 } as const;
 
-function clientIp(req: NextRequest): string {
-    return req.headers.get("cf-connecting-ip")
-        || req.headers.get("x-real-ip")
-        || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+export function trustedClientIp(req: NextRequest): string {
+    return req.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim()
         || "unknown";
 }
 
@@ -37,7 +35,7 @@ export function acquireApiRequest(req: NextRequest, policyName: keyof typeof POL
     const now = Date.now();
     prune(now);
     const policy = POLICIES[policyName];
-    const key = `${policyName}:${clientIp(req)}`;
+    const key = `${policyName}:${trustedClientIp(req)}`;
     const bucket = buckets.get(key) || { tokens: policy.capacity, updatedAt: now, active: 0, lastSeen: now };
     const elapsedMinutes = Math.max(0, now - bucket.updatedAt) / 60_000;
     bucket.tokens = Math.min(policy.capacity, bucket.tokens + elapsedMinutes * policy.refillPerMinute);
