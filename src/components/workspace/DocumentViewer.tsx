@@ -342,6 +342,9 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
         const pixelHeight = Math.min(renderedHeight - pixelTop, rawHeight + padY * 2);
 
         const isNearTop = pixelTop < 36;
+        const isNearRight = (pixelLeft + pixelWidth / 2) > renderedWidth * 0.55;
+        const availableWidth = isNearRight ? pixelLeft + pixelWidth - 8 : renderedWidth - pixelLeft - 8;
+        const maxBadgeWidth = Math.max(140, Math.min(360, availableWidth));
 
         return (
             <AnimatePresence>
@@ -372,28 +375,32 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                             initial={{ opacity: 0, y: isNearTop ? -6 : 6 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.08 }}
-                            className={`absolute left-0 bg-amber-500/90 group-hover/highlight-box:opacity-10 hover:!opacity-10 dark:bg-amber-600/90 text-white text-[11px] font-bold tracking-tight pl-2.5 pr-1 py-1 rounded-lg shadow-lg whitespace-nowrap flex items-center gap-1.5 border border-amber-300/60 transition-opacity duration-200 pointer-events-auto z-40 select-none ${
+                            style={{ maxWidth: `${maxBadgeWidth}px` }}
+                            className={`absolute ${isNearRight ? 'right-0' : 'left-0'} bg-amber-500/90 group-hover/highlight-box:opacity-10 hover:!opacity-10 dark:bg-amber-600/90 text-white text-[11px] font-bold tracking-tight pl-2.5 pr-1 py-1 rounded-lg shadow-lg flex items-center gap-1.5 border border-amber-300/60 transition-opacity duration-200 pointer-events-auto z-40 select-none overflow-hidden ${
                                 isNearTop ? 'top-full mt-1.5' : '-top-8'
                             }`}
-                            title="Наведите курсор, чтобы увидеть текст под плашкой"
+                            title={activeHighlight.rawValue ? `${cleanHighlightLabel(activeHighlight.label)}: ${activeHighlight.rawValue}` : "Наведите курсор, чтобы увидеть текст под плашкой"}
                         >
-                            <span className="uppercase text-[10px] tracking-wider opacity-95">
+                            <span className="uppercase text-[10px] tracking-wider opacity-95 shrink-0">
                                 {cleanHighlightLabel(activeHighlight.label)}
                             </span>
                             {activeHighlight.rawValue && (
-                                <span className="font-mono font-bold bg-black/25 text-white px-1.5 py-0.5 rounded text-[10.5px]">
+                                <span 
+                                    className="font-mono font-bold bg-black/25 text-white px-1.5 py-0.5 rounded text-[10.5px] truncate max-w-[170px] sm:max-w-[210px] inline-block align-bottom"
+                                    title={String(activeHighlight.rawValue)}
+                                >
                                     : {activeHighlight.rawValue}
                                 </span>
                             )}
                             {isSnapped && (
-                                <span className="bg-emerald-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded tracking-normal">
+                                <span className="bg-emerald-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded tracking-normal shrink-0">
                                     VECTOR SNAPPED
                                 </span>
                             )}
                             <button
                                 type="button"
                                 onClick={(event) => { event.stopPropagation(); setShowBadge(false); }}
-                                className="ml-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-white/90 hover:bg-black/20 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                                className="ml-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-white/90 hover:bg-black/20 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
                                 title="Скрыть плашку (H)"
                                 aria-label="Скрыть плашку"
                             >
