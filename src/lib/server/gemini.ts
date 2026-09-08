@@ -13,9 +13,10 @@ export async function generateContentWithFallback(
     requestConfig: any,
     options: GenerateFallbackOptions,
 ) {
+    const primaryModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
     const models = Array.from(new Set([
-        process.env.GEMINI_MODEL || "gemini-2.5-flash",
-        ...(options.allowLite === false ? [] : ["gemini-flash-lite-latest"]),
+        primaryModel,
+        "gemini-2.5-flash",
         "gemini-flash-latest",
     ]));
     let lastError: any = null;
