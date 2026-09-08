@@ -66,11 +66,14 @@ async function extractOne(
 
                 if (!res.ok) {
                     const retryHeader = res.headers.get("retry-after");
-                    const retryAfter = retryHeader ? Number(retryHeader) : undefined;
+                    let retryAfter = retryHeader ? Number(retryHeader) : undefined;
                     let errMsg = `HTTP ${res.status}`;
                     try {
                         const j = await res.json();
                         errMsg = j.error || errMsg;
+                        if (!retryAfter && j.retryAfter) {
+                            retryAfter = Number(j.retryAfter);
+                        }
                     } catch {}
                     throw new HttpError(res.status, errMsg, retryAfter);
                 }

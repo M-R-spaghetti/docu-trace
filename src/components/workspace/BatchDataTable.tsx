@@ -1237,11 +1237,13 @@ export function BatchDataTable({
                                             ? `${Math.max(items[0]?.totalItemsInDoc || 0, items.length)} позиций найдено`
                                             : doc.status === "extracting"
                                             ? "Распознаём документ…"
+                                            : failed
+                                            ? (/429|quota|resource_exhausted/i.test(doc.error || "") ? "Квота API исчерпана (429)" : (doc.status === "timeout" ? "Превышен таймаут" : "Ошибка распознавания"))
                                             : "В очереди на обработку…"}
                                     </span>
                                 </span>
-                                <span className={`shrink-0 text-xs font-medium ${ready ? "text-emerald-600" : "text-muted-foreground"}`}>
-                                    {ready ? "Готово" : <Loader2 className="w-4 h-4 animate-spin" />}
+                                <span className={`shrink-0 text-xs font-medium ${ready ? "text-emerald-600" : failed ? "text-red-500" : "text-muted-foreground"}`}>
+                                    {ready ? "Готово" : failed ? "Ошибка" : <Loader2 className="w-4 h-4 animate-spin" />}
                                 </span>
                             </button>
                         );

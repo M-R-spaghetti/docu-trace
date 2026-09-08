@@ -19,17 +19,26 @@ export function createLimiter(opts: LimiterOptions = {}) {
     let active = 0;
     const pendingSlots: (() => void)[] = [];
     const requestTimestamps: number[] = [];
+    let lastRequestTime = 0;
+    const minSpacingMs = 1200;
 
     async function acquireRate(): Promise<void> {
         while (true) {
             const now = Date.now();
+            const timeSinceLast = now - lastRequestTime;
+            if (timeSinceLast < minSpacingMs) {
+                await sleep(minSpacingMs - timeSinceLast);
+                continue;
+            }
+
             // Prune timestamps older than 60 seconds
             while (requestTimestamps.length > 0 && now - requestTimestamps[0] > 60_000) {
                 requestTimestamps.shift();
             }
 
             if (requestTimestamps.length < maxPerMinute) {
-                requestTimestamps.push(now);
+                lastRequestTime = Date.now();
+                requestTimestamps.push(lastRequestTime);
                 return;
             }
 
