@@ -22,6 +22,75 @@ function getAI(): GoogleGenAI {
     return _ai;
 }
 
+const DEFAULT_FALLBACK_SCHEMA = {
+    type: "object",
+    properties: {
+        document_number: {
+            type: "object",
+            properties: {
+                value: { type: "string", description: "Номер документа или счёта" },
+                box_2d: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
+                page: { type: "number" }
+            },
+            required: ["value", "box_2d", "page"]
+        },
+        document_date: {
+            type: "object",
+            properties: {
+                value: { type: "string", description: "Дата документа" },
+                box_2d: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
+                page: { type: "number" }
+            },
+            required: ["value", "box_2d", "page"]
+        },
+        vendor_name: {
+            type: "object",
+            properties: {
+                value: { type: "string", description: "Поставщик или продавец" },
+                box_2d: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
+                page: { type: "number" }
+            },
+            required: ["value", "box_2d", "page"]
+        },
+        total_amount: {
+            type: "object",
+            properties: {
+                value: { type: "number", description: "Итоговая сумма" },
+                box_2d: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
+                page: { type: "number" }
+            },
+            required: ["value", "box_2d", "page"]
+        },
+        items: {
+            type: "array",
+            items: {
+                type: "object",
+                properties: {
+                    name: {
+                        type: "object",
+                        properties: {
+                            value: { type: "string", description: "Наименование товара / услуги" },
+                            box_2d: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
+                            page: { type: "number" }
+                        },
+                        required: ["value", "box_2d", "page"]
+                    },
+                    price: {
+                        type: "object",
+                        properties: {
+                            value: { type: "number", description: "Цена или сумма позиции" },
+                            box_2d: { type: "array", items: { type: "number" }, minItems: 4, maxItems: 4 },
+                            page: { type: "number" }
+                        },
+                        required: ["value", "box_2d", "page"]
+                    }
+                },
+                required: ["name"]
+            }
+        }
+    }
+};
+
 export async function POST(req: NextRequest) {
     const guard = acquireApiRequest(req, "schema");
     if (guard.response) return guard.response;
@@ -55,8 +124,9 @@ export async function POST(req: NextRequest) {
             ],
             config: {
                 responseMimeType: "application/json",
+                thinkingConfig: { thinkingBudget: 0 },
             }
-        }, { deadline, label: "Schema Engine", perCallTimeoutMs: 18_000 });
+        }, { deadline, label: "Schema Engine", perCallTimeoutMs: 12_000 });
 
         let schemaText = schemaResponse.text || "{}";
         schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
@@ -73,11 +143,8 @@ export async function POST(req: NextRequest) {
         }
         return NextResponse.json({ schema }, { status: 200 });
     } catch (error: any) {
-        console.error("Schema Generation Error:", error);
-        return NextResponse.json(
-            { error: error.message || "Failed to generate schema." },
-            { status: typeof error?.status === "number" && error.status >= 400 && error.status <= 599 ? error.status : 500 }
-        );
+        console.warn("Schema Generation Error (activating fallback schema):", error);
+        return NextResponse.json({ schema: DEFAULT_FALLBACK_SCHEMA, isFallback: true }, { status: 200 });
     } finally {
         guard.release();
     }

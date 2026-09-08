@@ -372,11 +372,10 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                             initial={{ opacity: 0, y: isNearTop ? -6 : 6 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: 0.08 }}
-                            className={`absolute left-0 bg-amber-500/85 group-hover/highlight-box:opacity-10 hover:!opacity-10 dark:bg-amber-600/85 text-white backdrop-blur-md text-[11px] font-bold tracking-tight px-2.5 py-1 rounded-md shadow-lg whitespace-nowrap flex items-center gap-1.5 border border-white/20 transition-opacity duration-200 pointer-events-auto z-40 cursor-pointer select-none ${
+                            className={`absolute left-0 bg-amber-500/90 group-hover/highlight-box:opacity-10 hover:!opacity-10 dark:bg-amber-600/90 text-white text-[11px] font-bold tracking-tight pl-2.5 pr-1 py-1 rounded-lg shadow-lg whitespace-nowrap flex items-center gap-1.5 border border-amber-300/60 transition-opacity duration-200 pointer-events-auto z-40 select-none ${
                                 isNearTop ? 'top-full mt-1.5' : '-top-8'
                             }`}
-                            title="Наведите курсор, чтобы сделать плашку прозрачной (или нажмите клавишу H для скрытия)"
-                            onClick={() => setShowBadge(false)}
+                            title="Наведите курсор, чтобы увидеть текст под плашкой"
                         >
                             <span className="uppercase text-[10px] tracking-wider opacity-95">
                                 {cleanHighlightLabel(activeHighlight.label)}
@@ -391,6 +390,15 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                                     VECTOR SNAPPED
                                 </span>
                             )}
+                            <button
+                                type="button"
+                                onClick={(event) => { event.stopPropagation(); setShowBadge(false); }}
+                                className="ml-0.5 inline-flex h-6 w-6 items-center justify-center rounded-md text-white/90 hover:bg-black/20 hover:text-white focus-visible:outline-2 focus-visible:outline-white"
+                                title="Скрыть плашку (H)"
+                                aria-label="Скрыть плашку"
+                            >
+                                <EyeOff className="h-3.5 w-3.5" />
+                            </button>
                         </motion.div>
                     )}
                 </motion.div>
@@ -400,11 +408,34 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
 
     if (!objectUrl) return null;
 
+    const viewControls = (
+        <div className="flex h-8 items-center overflow-hidden rounded-lg border border-border/70 bg-muted/40">
+            <button type="button" onClick={() => setShowBadge(value => !value)}
+                className={`inline-flex h-full w-9 items-center justify-center border-r border-border/70 ${showBadge ? 'text-amber-500 hover:bg-amber-500/10' : 'text-muted-foreground hover:bg-muted'}`}
+                title={showBadge ? "Скрыть плашку (H)" : "Показать плашку (H)"} aria-label={showBadge ? "Скрыть плашку" : "Показать плашку"}>
+                {showBadge ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+            </button>
+            <button type="button" onClick={() => setManualZoom(value => Math.max(0.5, Number((value - 0.25).toFixed(2))))}
+                className="inline-flex h-full w-9 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" title="Уменьшить" aria-label="Уменьшить масштаб">
+                <ZoomOut className="h-4 w-4" />
+            </button>
+            <span className="min-w-14 px-1 text-center text-xs font-semibold tabular-nums" aria-live="polite">{Math.round(zoomScale * 100)}%</span>
+            <button type="button" onClick={() => setManualZoom(value => Math.min(4, Number((value + 0.25).toFixed(2))))}
+                className="inline-flex h-full w-9 items-center justify-center text-muted-foreground hover:bg-muted hover:text-foreground" title="Увеличить" aria-label="Увеличить масштаб">
+                <ZoomIn className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={showWholeDocument}
+                className="inline-flex h-full w-9 items-center justify-center border-l border-border/70 text-muted-foreground hover:bg-muted hover:text-foreground" title="Показать весь документ" aria-label="Показать весь документ">
+                <RotateCcw className="h-4 w-4" />
+            </button>
+        </div>
+    );
+
     return (
         <div className="relative w-full h-full flex flex-col items-center justify-start overflow-hidden bg-muted/20 border rounded-xl shadow-sm">
             {/* Top Navigation Bar for Multi-Document Batch */}
             {isBatchMode && batchFiles && batchFiles.length > 0 && (
-                <div className="w-full flex items-center justify-between px-3 py-2 bg-background/95 backdrop-blur-md border-b text-xs shrink-0 z-20 shadow-xs">
+                <div className="w-full flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-background/95 border-b text-xs shrink-0 z-20">
                     <div className="flex items-center gap-2 min-w-0">
                         <FileText className="w-4 h-4 text-primary shrink-0" />
                         <span className="font-bold text-foreground">
@@ -415,7 +446,8 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                         </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                        {viewControls}
                         <Button
                             variant="outline"
                             size="icon"
@@ -445,7 +477,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
 
             {/* Top Navigation Bar for Multi-Page PDF */}
             {!isBatchMode && isPdf && numPages && numPages > 1 && (
-                <div className="w-full flex items-center justify-between px-3 py-2 bg-background/95 backdrop-blur-md border-b text-xs shrink-0 z-20 shadow-xs">
+                <div className="w-full flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-background/95 border-b text-xs shrink-0 z-20">
                     <div className="flex items-center gap-2 min-w-0">
                         <FileText className="w-4 h-4 text-primary shrink-0" />
                         <span className="font-bold text-foreground">
@@ -453,7 +485,8 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                         </span>
                     </div>
 
-                    <div className="flex items-center gap-1.5">
+                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                        {viewControls}
                         <Button
                             variant="outline"
                             size="icon"
@@ -481,6 +514,12 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 </div>
             )}
 
+            {!isBatchMode && !(isPdf && numPages && numPages > 1) && (
+                <div className="flex w-full shrink-0 items-center justify-end border-b bg-background/95 px-3 py-2">
+                    {viewControls}
+                </div>
+            )}
+
             {/* Document / Receipt Canvas Scroll Container */}
             <div
                 ref={containerRef}
@@ -503,52 +542,6 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                         </div>
                     );
                 })()}
-
-                {/* Sticky controls stay visible while auto-focus scrolls the document. */}
-                <div className="sticky top-3 z-40 h-0 flex justify-end pr-3 pointer-events-none">
-                <div className="flex items-center gap-1 bg-background/95 backdrop-blur-md border px-2 py-1 rounded-full shadow-md text-xs w-fit pointer-events-auto">
-                    <button
-                        type="button"
-                        onClick={() => setShowBadge(v => !v)}
-                        className={`p-1 rounded-full transition-colors ${
-                            showBadge
-                                ? 'text-amber-500 hover:bg-amber-500/15'
-                                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                        }`}
-                        title={showBadge ? "Скрыть плашки меток [H] (оставить только рамку)" : "Показать плашки меток [H]"}
-                    >
-                        {showBadge ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-                    </button>
-                    <div className="h-3 w-px bg-border/60 mx-0.5" />
-                    <button
-                        type="button"
-                        onClick={() => setManualZoom(s => Math.max(0.5, Number((s - 0.25).toFixed(2))))}
-                        className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors"
-                        title="Уменьшить (-)"
-                    >
-                        <ZoomOut className="w-3.5 h-3.5" />
-                    </button>
-                    <span className="font-mono text-[11px] font-semibold px-1 min-w-[42px] text-center">
-                        {Math.round(zoomScale * 100)}%
-                    </span>
-                    <button
-                        type="button"
-                        onClick={() => setManualZoom(s => Math.min(4.0, Number((s + 0.25).toFixed(2))))}
-                        className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors"
-                        title="Увеличить (+)"
-                    >
-                        <ZoomIn className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={showWholeDocument}
-                        className="p-1 hover:bg-muted rounded-full text-muted-foreground hover:text-foreground transition-colors ml-0.5 border-l pl-1.5"
-                        title="Показать весь документ"
-                    >
-                        <RotateCcw className="w-3.5 h-3.5" />
-                    </button>
-                </div>
-                </div>
 
                 {/* Main Render Area */}
                 {imageError ? (

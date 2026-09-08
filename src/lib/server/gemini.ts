@@ -14,8 +14,8 @@ export async function generateContentWithFallback(
 ) {
     const models = Array.from(new Set([
         process.env.GEMINI_MODEL || "gemini-2.5-flash",
-        "gemini-flash-latest",
         "gemini-flash-lite-latest",
+        "gemini-flash-latest",
     ]));
     let lastError: any = null;
 
@@ -42,8 +42,8 @@ export async function generateContentWithFallback(
             lastError = error;
             const status = Number(error?.status ?? error?.error?.status ?? error?.error?.code ?? error?.code);
             const message = String(error?.message || "");
-            const canFallback = [404, 429, 503].includes(status)
-                || /model.*not found|resource_exhausted|temporarily unavailable|timeout/i.test(message);
+            const canFallback = [404, 408, 429, 500, 502, 503, 504].includes(status)
+                || /model.*not found|resource_exhausted|temporarily unavailable|timeout|timed out|deadline_exceeded/i.test(message);
             if (!canFallback || remainingRequestTime(options.deadline) < 1_000) throw error;
             console.warn(`[${options.label}] Model ${model} unavailable (${message || status}); trying fallback.`);
         }
