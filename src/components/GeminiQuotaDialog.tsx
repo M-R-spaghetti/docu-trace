@@ -78,7 +78,7 @@ export function GeminiQuotaDialog() {
                     <label className="block space-y-2">
                         <span className="text-sm font-semibold">Модель</span>
                         <input value={model} onChange={event => setModel(event.target.value)} list="gemini-models" className="h-11 w-full rounded-xl border border-input bg-background px-3 font-mono text-sm outline-none focus:border-ring focus:ring-2 focus:ring-ring/25" />
-                        <datalist id="gemini-models"><option value="gemini-3.5-flash" /><option value="gemini-3-flash-preview" /><option value="gemini-2.5-flash" /><option value="gemini-flash-latest" /><option value="gemini-flash-lite-latest" /></datalist>
+                        <datalist id="gemini-models"><option value="gemini-3.5-flash" /><option value="gemini-3.5-flash-lite" /><option value="gemini-3.8-flash" /><option value="gemini-3-flash-preview" /><option value="gemini-2.5-flash" /><option value="gemini-flash-lite-latest" /></datalist>
                         <p className="text-xs text-muted-foreground">Flash — оптимальный баланс цены и точности. Можно указать другое доступное вам имя Gemini-модели.</p>
                     </label>
                     <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/60 bg-muted/30 p-3">

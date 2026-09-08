@@ -40,6 +40,8 @@ export async function generateContentWithFallback(
     const models = (options.useProvidedClient && options.model) ? [options.model] : Array.from(new Set([
         primaryModel,
         "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
         "gemini-3-flash-preview",
         "gemini-flash-lite-latest",
         "gemini-flash-latest",

@@ -11,7 +11,7 @@ describe("generateContentWithFallback", () => {
         } } };
         await generateContentWithFallback(ai, { contents: [], config: {} }, { deadline: createRequestDeadline(5_000), label: "test" });
         expect(requested[0]).toBe("gemini-3.5-flash");
-        expect(requested[1]).toBe("gemini-3-flash-preview");
+        expect(requested[1]).toBe("gemini-3.5-flash-lite");
     });
 
     it("uses only the user-selected model with a provided client", async () => {
