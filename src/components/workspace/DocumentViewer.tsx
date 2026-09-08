@@ -7,7 +7,6 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import { getPageTextItems, snapToPdfText } from "@/lib/pdfTextSnapper";
 import { computeBoxView } from "@/lib/zoomToBox";
 import { groundingCacheKey, imageDataFromElement, snapImageData } from "@/lib/snapping/imageTextSnapper";
-import { requestGroundingFallback } from "@/lib/snapping/groundingFallbackClient";
 import { getGroundingCache, saveGroundingCache, type GroundingCacheRecord } from "@/lib/db";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, RotateCcw, AlertTriangle, Upload, Eye, EyeOff } from "lucide-react";
@@ -268,7 +267,6 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
             if (!isPdf && !activeHighlight) setGrounding(null);
             return;
         }
-        const controller = new AbortController();
         let cancelled = false;
         const key = groundingCacheKey(activeFile, activeHighlight);
         const run = async () => {
@@ -281,14 +279,14 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 const retry = snapImageData(imageDataFromElement(image, 3200), activeHighlight.box_2d);
                 if (retry.status === "refined") result = retry;
             }
-            let record: GroundingCacheRecord = { id: key, box_2d: result.box_2d, status: result.status, source: result.source, updatedAt: Date.now() };
+            const record: GroundingCacheRecord = { id: key, box_2d: result.box_2d, status: result.status, source: result.source, updatedAt: Date.now() };
             if (!cancelled) {
                 setGrounding({ ...record, targetKey: key });
                 saveGroundingCache(record).catch(() => {});
             }
         };
         run().catch(error => console.warn("Image grounding failed:", error));
-        return () => { cancelled = true; controller.abort(); };
+        return () => { cancelled = true; };
     }, [activeHighlight, activeFile, groundingTargetKey, imageLoadVersion, isPdf]);
 
     // Auto-scroll and smart-zoom when highlight changes

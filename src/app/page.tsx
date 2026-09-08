@@ -207,7 +207,7 @@ export default function Home() {
           sessionId,
           concurrency: 3,
           rpm: 10,
-          maxAutoRetryPasses: 6,
+          maxAutoRetryPasses: 2,
           onStatusMessage: (msg) => {
             updateSession(recordId, { statusMessage: msg });
           },
@@ -441,7 +441,7 @@ export default function Home() {
         sessionId: sessId,
         concurrency: 3,
         rpm: 10,
-        maxAutoRetryPasses: 6,
+        maxAutoRetryPasses: 2,
         onStatusMessage: (msg) => {
           updateSession(sessId, { statusMessage: msg });
         },

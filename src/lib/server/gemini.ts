@@ -37,14 +37,10 @@ export async function generateContentWithFallback(
     }
 
     const primaryModel = options.model || process.env.GEMINI_MODEL || "gemini-3.5-flash";
+    // Keep the normal path to one model call. A single proven fallback is used
+    // only for errors where changing model can actually help.
     const models = (options.useProvidedClient && options.model) ? [options.model] : Array.from(new Set([
         primaryModel,
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.8-flash",
-        "gemini-3-flash-preview",
-        "gemini-flash-lite-latest",
-        "gemini-flash-latest",
         "gemini-2.5-flash",
     ]));
     let lastError: any = null;
@@ -60,7 +56,7 @@ export async function generateContentWithFallback(
             if (remaining < 1_000) {
                 throw Object.assign(new Error("Document processing exceeded its total time budget."), { status: 504 });
             }
-            const timeout = Math.max(500, Math.min(options.perCallTimeoutMs ?? 22_000, remaining - 250));
+            const timeout = Math.max(500, Math.min(options.perCallTimeoutMs ?? 150_000, remaining - 500));
             try {
                 const clientTag = numClients > 1 ? ` [Key ${clientIdx + 1}/${numClients}]` : "";
                 console.log(`[${options.label}]${clientTag} Requesting model ${model}; ${remaining}ms budget remains.`);
@@ -84,10 +80,15 @@ export async function generateContentWithFallback(
                 const message = String(error?.message || "");
                 const isQuotaError = status === 429 || /resource_exhausted|quota/i.test(message);
                 const isModelNotFound = status === 404 || /model.*not found/i.test(message);
-                const canFallback = [404, 408, 429, 500, 502, 503, 504].includes(status)
-                    || /model.*not found|resource_exhausted|temporarily unavailable|timeout|timed out|deadline_exceeded/i.test(message);
+                const isTimeout = [408, 504].includes(status)
+                    || /timeout|timed out|deadline_exceeded/i.test(message);
+                const canFallback = [404, 429, 500, 502, 503].includes(status)
+                    || /model.*not found|resource_exhausted|temporarily unavailable/i.test(message);
 
-                if (!canFallback || remainingRequestTime(options.deadline) < 1_000) throw error;
+                // A timeout means the model needed more time. Starting another
+                // model at this point only creates another paid invocation and
+                // usually runs into the same request deadline.
+                if (isTimeout || !canFallback || remainingRequestTime(options.deadline) < 1_000) throw error;
 
                 if (isModelNotFound) {
                     console.warn(`[${options.label}] Model ${model} not supported (404); skipping to next model candidate...`);

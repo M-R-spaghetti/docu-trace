@@ -52,7 +52,7 @@ An intelligent document analysis and data extraction platform powered by Google 
 
 ## Deployment & Production Notes
 
-- **Vercel Serverless Execution Timeout**: The extraction route is configured with `export const maxDuration = 60` to accommodate multi-page documents and spatial vision extraction. Ensure your deployment tier supports functions up to 60 seconds (Vercel Pro or custom server).
+- **Vercel Function Timeout**: The extraction route is configured with `export const maxDuration = 180` so a full document extraction can finish without being split into short model calls. Ensure the deployment supports 180-second functions (Vercel Fluid Compute or an equivalent custom runtime).
 - **Payload & Image Compression**: The default API limit is 4MB to stay below common serverless request-body limits. DocuTrace compresses large camera scans client-side to 2048px before transmission. Compression is lossy and may affect very small text; keep original scans available for human verification.
 - **PDF Constraints**: Source PDFs may be up to 25MB and are split into smaller requests. Every generated request chunk must stay below 4MB.
 - **Batch Constraints**: Up to 100 source documents and 500MB total per package. All limits are defined centrally in `src/lib/uploadLimits.ts`, ready for future free/paid plan profiles.

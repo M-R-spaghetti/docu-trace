@@ -30,7 +30,7 @@ async function extractOne(
     opts: RunReceiptBatchOptions,
     limiter: <T>(fn: () => Promise<T>) => Promise<T>
 ): Promise<any> {
-    const timeoutMs = opts.timeoutMs ?? 90_000;
+    const timeoutMs = opts.timeoutMs ?? 190_000;
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort("TIMEOUT"), timeoutMs);
 
@@ -49,7 +49,7 @@ async function extractOne(
         return await limiter(() =>
             withRetry(async () => {
                 if (ac.signal.aborted) {
-                    if (ac.signal.reason === "TIMEOUT") throw new Error("Request timed out after 90s");
+                    if (ac.signal.reason === "TIMEOUT") throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
                     throw new Error("Cancelled by user");
                 }
 
@@ -81,7 +81,7 @@ async function extractOne(
 
                 const j = await res.json();
                 return j.data ?? {};
-            }, { maxAttempts: 5, initialDelayMs: 2000 })
+            }, { maxAttempts: 1, initialDelayMs: 2000 })
         );
     } finally {
         clearTimeout(timer);
@@ -93,7 +93,7 @@ async function extractOne(
  * Executes high-performance per-file batch processing:
  * - 1 document = 1 extraction call with a shared pre-compiled schema
  * - Controlled concurrency (default 4) and rate limiting (default 12 RPM)
- * - 90s isolated timeout per file preventing stuck slots
+ * - 190s isolated timeout per file, aligned with the server extraction budget
  * - Real-time onRow streaming and IndexedDB persistence
  * - Client-side strict two-axis audit checks (auto: ok/warn/error, human: unreviewed)
  * - Autonomous multi-pass retry for rate limits / timeouts
@@ -103,7 +103,7 @@ export async function runReceiptBatch(
     schema: any,
     opts: RunReceiptBatchOptions
 ): Promise<DocRow[]> {
-    const maxPasses = opts.maxAutoRetryPasses ?? 6;
+    const maxPasses = opts.maxAutoRetryPasses ?? 2;
     const limiter = createLimiter({
         maxConcurrent: opts.concurrency ?? 3,
         maxPerMinute: opts.rpm ?? 10,
@@ -217,7 +217,7 @@ export async function runReceiptBatch(
 
     await mapWithConcurrency(files, opts.concurrency ?? 3, processFile);
 
-    // Autonomous Multi-Pass Auto-Retry for failed / timed-out files (up to 5 automatic retry rounds under the hood)
+    // One autonomous retry pass for genuinely failed / timed-out files.
     let pass = 1;
     let currentRows = Array.from(rowsMap.values());
     let failedRows = currentRows.filter(r => r.status === "failed" || r.status === "timeout");

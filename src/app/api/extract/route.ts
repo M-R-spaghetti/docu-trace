@@ -9,7 +9,7 @@ import { createRequestDeadline, generateContentWithFallback } from "@/lib/server
 import { getUserGemini, isQuotaError } from "@/lib/server/userGemini";
 
 // Max duration for Vercel Serverless execution (up to 60s for Pro/Enterprise)
-export const maxDuration = 60;
+export const maxDuration = 180;
 export const dynamic = "force-dynamic";
 
 // Keep the default below common serverless request-body limits. Self-hosted deployments may override it.
@@ -152,7 +152,9 @@ raw_text запрещено нормализовать или исправлят
 export async function POST(req: NextRequest) {
     const guard = acquireApiRequest(req, "extract");
     if (guard.response) return guard.response;
-    const deadline = createRequestDeadline(55_000);
+    // Leave a small margin for parsing and returning the response before the
+    // platform terminates the function.
+    const deadline = createRequestDeadline(170_000);
     try {
         const formData = await req.formData();
         const file = formData.get("file") as File | null;
@@ -220,7 +222,7 @@ export async function POST(req: NextRequest) {
                 config: {
                     responseMimeType: "application/json",
                 }
-            }, { deadline, label: "Schema Engine", perCallTimeoutMs: 35_000, ...userOptions });
+            }, { deadline, label: "Schema Engine", perCallTimeoutMs: 90_000, ...userOptions });
 
             let schemaText = schemaResponse.text || "{}";
             schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
@@ -276,6 +278,14 @@ export async function POST(req: NextRequest) {
             }, { deadline, label: "Extraction Engine", ...userOptions });
             extractionText = extractionResponse.text || "{}";
         } catch (schemaErr: any) {
+            const status = Number(schemaErr?.status ?? schemaErr?.error?.status ?? schemaErr?.error?.code);
+            const message = String(schemaErr?.message || "");
+            const isSchemaCompatibilityError = status === 400 || status === 422
+                || /response.?schema|invalid.*schema|schema.*invalid/i.test(message);
+            // A second request is useful only when Gemini rejected the response
+            // schema. Retrying timeouts and upstream outages doubles cost without
+            // giving the next call enough time to finish.
+            if (!isSchemaCompatibilityError) throw schemaErr;
             console.warn(
                 "Enforced responseSchema call failed, falling back to prompt-guided JSON mode:",
                 schemaErr?.message || schemaErr
