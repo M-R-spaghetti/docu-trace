@@ -248,10 +248,6 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     if (retry.status === "refined") raster = retry;
                 }
                 record = { id: groundingTargetKey, box_2d: raster.box_2d, status: raster.status, source: raster.source, updatedAt: Date.now() };
-                if (raster.status === "approximate" && (activeHighlight.rawText || activeHighlight.rawValue)) {
-                    const fallback = await requestGroundingFallback(activeFile, activeHighlight, controller.signal).catch(() => null);
-                    if (fallback) record = { ...record, box_2d: fallback, status: "refined", source: "gemini_fallback" };
-                }
             }
             if (!isCancelled) {
                 setGrounding({ ...record, targetKey: groundingTargetKey });
@@ -266,7 +262,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
         };
     }, [activeHighlight, activeFile, groundingTargetKey, isPdf, pdfDocProxy]);
 
-    // Raster documents: two local projection passes, then an on-demand Gemini fallback.
+    // Raster documents: two local projection passes using browser canvas.
     useEffect(() => {
         if (!activeHighlight || isPdf || !imageRef.current || !activeFile || imageLoadVersion === 0) {
             if (!isPdf && !activeHighlight) setGrounding(null);
@@ -286,10 +282,6 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 if (retry.status === "refined") result = retry;
             }
             let record: GroundingCacheRecord = { id: key, box_2d: result.box_2d, status: result.status, source: result.source, updatedAt: Date.now() };
-            if (result.status === "approximate" && (activeHighlight.rawText || activeHighlight.rawValue)) {
-                const fallback = await requestGroundingFallback(activeFile, activeHighlight, controller.signal).catch(() => null);
-                if (fallback) record = { ...record, box_2d: fallback, status: "refined", source: "gemini_fallback" };
-            }
             if (!cancelled) {
                 setGrounding({ ...record, targetKey: key });
                 saveGroundingCache(record).catch(() => {});

@@ -36,20 +36,24 @@ export async function generateContentWithFallback(
         clients = keys.map(k => new GoogleGenAI({ apiKey: k }));
     }
 
-    const primaryModel = options.model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
-    const models = options.model ? [options.model] : Array.from(new Set([
+    const primaryModel = options.model || process.env.GEMINI_MODEL || "gemini-3.5-flash";
+    const models = (options.useProvidedClient && options.model) ? [options.model] : Array.from(new Set([
         primaryModel,
-        "gemini-2.5-flash",
+        "gemini-3.5-flash",
+        "gemini-3-flash-preview",
+        "gemini-flash-lite-latest",
         "gemini-flash-latest",
+        "gemini-2.5-flash",
     ]));
     let lastError: any = null;
 
     const numClients = clients.length;
-    for (let clientAttempt = 0; clientAttempt < numClients; clientAttempt++) {
-        const clientIdx = (activeKeyIndex + clientAttempt) % numClients;
-        const currentClient = clients[clientIdx];
+    for (const model of models) {
+        let modelUnavailable = false;
+        for (let clientAttempt = 0; clientAttempt < numClients; clientAttempt++) {
+            const clientIdx = (activeKeyIndex + clientAttempt) % numClients;
+            const currentClient = clients[clientIdx];
 
-        for (const model of models) {
             const remaining = remainingRequestTime(options.deadline);
             if (remaining < 1_000) {
                 throw Object.assign(new Error("Document processing exceeded its total time budget."), { status: 504 });
@@ -77,19 +81,28 @@ export async function generateContentWithFallback(
                 const status = Number(error?.status ?? error?.error?.status ?? error?.error?.code ?? error?.code);
                 const message = String(error?.message || "");
                 const isQuotaError = status === 429 || /resource_exhausted|quota/i.test(message);
+                const isModelNotFound = status === 404 || /model.*not found/i.test(message);
                 const canFallback = [404, 408, 429, 500, 502, 503, 504].includes(status)
                     || /model.*not found|resource_exhausted|temporarily unavailable|timeout|timed out|deadline_exceeded/i.test(message);
 
                 if (!canFallback || remainingRequestTime(options.deadline) < 1_000) throw error;
 
-                if (isQuotaError && numClients > 1 && clientAttempt < numClients - 1) {
-                    console.warn(`[${options.label}] Key ${clientIdx + 1}/${numClients} hit quota (429); rotating to next key...`);
-                    // Switch to next client key
+                if (isModelNotFound) {
+                    console.warn(`[${options.label}] Model ${model} not supported (404); skipping to next model candidate...`);
+                    modelUnavailable = true;
                     break;
                 }
 
-                console.warn(`[${options.label}] Model ${model} unavailable (${message || status}); trying fallback.`);
+                if (isQuotaError && numClients > 1) {
+                    console.warn(`[${options.label}] Key ${clientIdx + 1}/${numClients} hit quota on ${model}; rotating to next key...`);
+                    continue;
+                }
+
+                console.warn(`[${options.label}] Model ${model} unavailable on Key ${clientIdx + 1} (${message || status}); trying next candidate...`);
             }
+        }
+        if (!modelUnavailable) {
+            console.warn(`[${options.label}] All keys exhausted for model ${model}; falling back to next candidate model...`);
         }
     }
     throw lastError;

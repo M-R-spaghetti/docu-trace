@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createRequestDeadline, generateContentWithFallback } from "./gemini";
 
 describe("generateContentWithFallback", () => {
-    it("always prioritizes gemini-2.5-flash and never uses lite models", async () => {
+    it("prioritizes gemini-3.5-flash and falls back seamlessly when unavailable", async () => {
         const requested: string[] = [];
         const ai = { models: { generateContent: async ({ model }: { model: string }) => {
             requested.push(model);
@@ -10,8 +10,8 @@ describe("generateContentWithFallback", () => {
             return { text: "{}" };
         } } };
         await generateContentWithFallback(ai, { contents: [], config: {} }, { deadline: createRequestDeadline(5_000), label: "test" });
-        expect(requested[0]).toBe("gemini-2.5-flash");
-        expect(requested.some(model => model.includes("lite"))).toBe(false);
+        expect(requested[0]).toBe("gemini-3.5-flash");
+        expect(requested[1]).toBe("gemini-3-flash-preview");
     });
 
     it("uses only the user-selected model with a provided client", async () => {
