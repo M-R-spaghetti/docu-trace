@@ -4,7 +4,7 @@ import { acquireApiRequest, validatePrompt } from "@/lib/server/requestGuard";
 import { buildArchitectPrompt } from "@/lib/server/prompts";
 import { createRequestDeadline, generateContentWithFallback } from "@/lib/server/gemini";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 let _ai: GoogleGenAI | null = null;
@@ -94,7 +94,7 @@ const DEFAULT_FALLBACK_SCHEMA = {
 export async function POST(req: NextRequest) {
     const guard = acquireApiRequest(req, "schema");
     if (guard.response) return guard.response;
-    const deadline = createRequestDeadline(25_000);
+    const deadline = createRequestDeadline(55_000);
     try {
         let userQuery = "Extract all important information, invoice numbers, line items, and totals.";
         let format = "auto";
@@ -124,9 +124,8 @@ export async function POST(req: NextRequest) {
             ],
             config: {
                 responseMimeType: "application/json",
-                thinkingConfig: { thinkingBudget: 0 },
             }
-        }, { deadline, label: "Schema Engine", perCallTimeoutMs: 12_000 });
+        }, { deadline, label: "Schema Engine", perCallTimeoutMs: 35_000 });
 
         let schemaText = schemaResponse.text || "{}";
         schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();

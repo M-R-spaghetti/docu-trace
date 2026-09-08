@@ -237,9 +237,8 @@ export async function POST(req: NextRequest) {
                 ],
                 config: {
                     responseMimeType: "application/json",
-                    thinkingConfig: { thinkingBudget: 0 },
                 }
-            }, { deadline, label: "Schema Engine", perCallTimeoutMs: 12_000 });
+            }, { deadline, label: "Schema Engine", perCallTimeoutMs: 35_000 });
 
             let schemaText = schemaResponse.text || "{}";
             schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
