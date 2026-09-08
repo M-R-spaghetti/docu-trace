@@ -1,0 +1,22 @@
+[
+  {
+    "document": "receipt-001.jpg",
+    "field": "date",
+    "category": "clear",
+    "expected_box": [120, 220, 150, 410],
+    "predicted_box": [118, 218, 152, 414],
+    "status": "refined",
+    "used_fallback": false,
+    "time_ms": 14
+  },
+  {
+    "document": "receipt-002.jpg",
+    "field": "total",
+    "category": "faded",
+    "expected_box": [760, 650, 800, 850],
+    "predicted_box": [755, 0, 805, 1000],
+    "status": "approximate",
+    "used_fallback": true,
+    "time_ms": 640
+  }
+]

@@ -121,6 +121,9 @@ function getHighlight(v: any, label?: string, fileName?: string, columnKey?: str
         page: v.page || 1,
         label,
         rawValue: String(v.value ?? ''),
+        rawText: String(v.raw_text ?? v.value ?? ''),
+        lineContext: typeof v.line_context === "string" ? v.line_context : undefined,
+        fieldType: v.field_type,
         fileName,
         columnKey,
     };

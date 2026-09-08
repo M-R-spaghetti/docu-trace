@@ -2,10 +2,13 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ActiveHighlight, BoundingBox } from "@/lib/types";
+import { ActiveHighlight, GroundingStatus } from "@/lib/types";
 import { Document, Page, pdfjs } from 'react-pdf';
 import { getPageTextItems, snapToPdfText } from "@/lib/pdfTextSnapper";
 import { computeBoxView } from "@/lib/zoomToBox";
+import { groundingCacheKey, imageDataFromElement, snapImageData } from "@/lib/snapping/imageTextSnapper";
+import { requestGroundingFallback } from "@/lib/snapping/groundingFallbackClient";
+import { getGroundingCache, saveGroundingCache, type GroundingCacheRecord } from "@/lib/db";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, FileText, ZoomIn, ZoomOut, RotateCcw, AlertTriangle, Upload, Eye, EyeOff } from "lucide-react";
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -20,9 +23,10 @@ interface DocumentViewerProps {
     batchFiles?: File[];
     onFileReplaced?: (newFile: File) => void;
     onBatchFilesReplaced?: (files: File[]) => void;
+    onGroundingStatusChange?: (highlight: ActiveHighlight, status: GroundingStatus) => void;
 }
 
-export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplaced, onBatchFilesReplaced }: DocumentViewerProps) {
+export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplaced, onBatchFilesReplaced, onGroundingStatusChange }: DocumentViewerProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const userControlledViewRef = useRef(false);
     const lastHighlightRef = useRef<string>("");
@@ -36,8 +40,8 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     const [isPdf, setIsPdf] = useState(false);
     const [numPages, setNumPages] = useState<number | null>(null);
     const [pdfDocProxy, setPdfDocProxy] = useState<any>(null);
-    const [snappedBox, setSnappedBox] = useState<BoundingBox | null>(null);
-    const [isSnapped, setIsSnapped] = useState(false);
+    const [grounding, setGrounding] = useState<(Pick<GroundingCacheRecord, "box_2d" | "status" | "source"> & { targetKey: string }) | null>(null);
+    const [imageLoadVersion, setImageLoadVersion] = useState(0);
     const [imageError, setImageError] = useState(false);
     const [showBadge, setShowBadge] = useState(true);
 
@@ -68,6 +72,14 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     const activeFile = isBatchMode && batchFiles && batchFiles.length > 0
         ? batchFiles[Math.max(0, Math.min(currentBatchPage - 1, batchFiles.length - 1))]
         : file;
+    const groundingTargetKey = activeHighlight && activeFile
+        ? groundingCacheKey(activeFile, activeHighlight)
+        : "";
+    const effectiveGrounding = grounding?.targetKey === groundingTargetKey ? grounding : null;
+
+    useEffect(() => {
+        if (activeHighlight && effectiveGrounding) onGroundingStatusChange?.(activeHighlight, effectiveGrounding.status);
+    }, [activeHighlight, effectiveGrounding, onGroundingStatusChange]);
 
     // Sync activeHighlight page/file to currentBatchPage or currentPdfPage
     useEffect(() => {
@@ -168,6 +180,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
         const nw = img.naturalWidth || 800;
         const nh = img.naturalHeight || 1100;
         updateBaseDimensions(nw, nh);
+        setImageLoadVersion(version => version + 1);
     };
 
     // Keyboard navigation between receipts / pages
@@ -199,43 +212,92 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
     // Vector Text Snapping for PDFs
     useEffect(() => {
         if (!activeHighlight || !isPdf || !pdfDocProxy) {
-            setSnappedBox(null);
-            setIsSnapped(false);
+            if (isPdf) setGrounding(null);
             return;
         }
 
         let isCancelled = false;
+        const controller = new AbortController();
         const pageNumber = activeHighlight.page || 1;
-
-        getPageTextItems(pdfDocProxy, pageNumber).then(pageData => {
-            if (isCancelled || !pageData || pageData.items.length === 0) return;
-
-            const targetVal = activeHighlight.rawValue || activeHighlight.label || '';
-            const snapped = snapToPdfText(
-                targetVal,
-                activeHighlight.box_2d,
-                pageData.items,
-                pageData.width,
-                pageData.height
-            );
-
+        const run = async () => {
+            const cached = await getGroundingCache(groundingTargetKey).catch(() => null);
+            if (cached && !isCancelled) { setGrounding({ ...cached, targetKey: groundingTargetKey }); return; }
+            const pageData = await getPageTextItems(pdfDocProxy, pageNumber);
+            const snapped = snapToPdfText(activeHighlight.rawValue || activeHighlight.label || "", activeHighlight.box_2d, pageData.items, pageData.width, pageData.height, {
+                rawText: activeHighlight.rawText, lineContext: activeHighlight.lineContext, fieldType: activeHighlight.fieldType,
+            });
+            let record: GroundingCacheRecord;
             if (snapped) {
-                setSnappedBox(snapped.box_2d);
-                setIsSnapped(true);
+                record = { id: groundingTargetKey, box_2d: snapped.box_2d, status: "exact", source: "pdf_text", updatedAt: Date.now() };
             } else {
-                setSnappedBox(null);
-                setIsSnapped(false);
+                const page = await pdfDocProxy.getPage(pageNumber);
+                const renderAt = async (maxSide: number) => {
+                    const unit = page.getViewport({ scale: 1 });
+                    const scale = Math.min(4, maxSide / Math.max(unit.width, unit.height));
+                    const viewport = page.getViewport({ scale });
+                    const canvas = document.createElement("canvas");
+                    canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+                    const context = canvas.getContext("2d", { willReadFrequently: true });
+                    if (!context) throw new Error("Canvas 2D is unavailable");
+                    await page.render({ canvasContext: context, viewport }).promise;
+                    return snapImageData(context.getImageData(0, 0, canvas.width, canvas.height), activeHighlight.box_2d);
+                };
+                let raster = await renderAt(1600);
+                if (raster.status === "approximate") {
+                    const retry = await renderAt(2800);
+                    if (retry.status === "refined") raster = retry;
+                }
+                record = { id: groundingTargetKey, box_2d: raster.box_2d, status: raster.status, source: raster.source, updatedAt: Date.now() };
+                if (raster.status === "approximate" && (activeHighlight.rawText || activeHighlight.rawValue)) {
+                    const fallback = await requestGroundingFallback(activeFile, activeHighlight, controller.signal).catch(() => null);
+                    if (fallback) record = { ...record, box_2d: fallback, status: "refined", source: "gemini_fallback" };
+                }
             }
-        }).catch(err => {
-            console.warn("Vector text snapping error:", err);
-            setSnappedBox(null);
-            setIsSnapped(false);
-        });
+            if (!isCancelled) {
+                setGrounding({ ...record, targetKey: groundingTargetKey });
+                saveGroundingCache(record).catch(() => {});
+            }
+        };
+        run().catch(error => console.warn("PDF grounding failed:", error));
 
         return () => {
             isCancelled = true;
+            controller.abort();
         };
-    }, [activeHighlight, isPdf, pdfDocProxy]);
+    }, [activeHighlight, activeFile, groundingTargetKey, isPdf, pdfDocProxy]);
+
+    // Raster documents: two local projection passes, then an on-demand Gemini fallback.
+    useEffect(() => {
+        if (!activeHighlight || isPdf || !imageRef.current || !activeFile || imageLoadVersion === 0) {
+            if (!isPdf && !activeHighlight) setGrounding(null);
+            return;
+        }
+        const controller = new AbortController();
+        let cancelled = false;
+        const key = groundingCacheKey(activeFile, activeHighlight);
+        const run = async () => {
+            const cached = await getGroundingCache(key).catch(() => null);
+            if (cached && !cancelled) { setGrounding({ ...cached, targetKey: key }); return; }
+            const image = imageRef.current;
+            if (!image) return;
+            let result = snapImageData(imageDataFromElement(image, 1800), activeHighlight.box_2d);
+            if (result.status === "approximate" && Math.max(image.naturalWidth, image.naturalHeight) > 1800) {
+                const retry = snapImageData(imageDataFromElement(image, 3200), activeHighlight.box_2d);
+                if (retry.status === "refined") result = retry;
+            }
+            let record: GroundingCacheRecord = { id: key, box_2d: result.box_2d, status: result.status, source: result.source, updatedAt: Date.now() };
+            if (result.status === "approximate" && (activeHighlight.rawText || activeHighlight.rawValue)) {
+                const fallback = await requestGroundingFallback(activeFile, activeHighlight, controller.signal).catch(() => null);
+                if (fallback) record = { ...record, box_2d: fallback, status: "refined", source: "gemini_fallback" };
+            }
+            if (!cancelled) {
+                setGrounding({ ...record, targetKey: key });
+                saveGroundingCache(record).catch(() => {});
+            }
+        };
+        run().catch(error => console.warn("Image grounding failed:", error));
+        return () => { cancelled = true; controller.abort(); };
+    }, [activeHighlight, activeFile, groundingTargetKey, imageLoadVersion, isPdf]);
 
     // Auto-scroll and smart-zoom when highlight changes
     useEffect(() => {
@@ -261,7 +323,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
             return;
         }
 
-        const effectiveBox = (isSnapped && snappedBox) ? snappedBox : activeHighlight.box_2d;
+        const effectiveBox = effectiveGrounding?.box_2d || [activeHighlight.box_2d[0], 0, activeHighlight.box_2d[2], 1000];
 
         if (containerRef.current && baseDims.width > 0 && baseDims.height > 0 && effectiveBox && effectiveBox.length === 4) {
             const [ymin, xmin, ymax, xmax] = effectiveBox;
@@ -302,7 +364,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                 };
             }
         }
-    }, [activeHighlight, isSnapped, snappedBox, baseDims]);
+    }, [activeHighlight, effectiveGrounding, baseDims]);
 
     // Current rendered dimensions for DOM layout
     const renderedWidth = Math.round(baseDims.width * zoomScale);
@@ -322,7 +384,8 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
             }
         }
 
-        const effectiveBox = (isSnapped && snappedBox) ? snappedBox : activeHighlight.box_2d;
+        const status = effectiveGrounding?.status || "approximate";
+        const effectiveBox = effectiveGrounding?.box_2d || [activeHighlight.box_2d[0], 0, activeHighlight.box_2d[2], 1000];
         if (!effectiveBox || effectiveBox.length !== 4) return null;
 
         const [ymin, xmin, ymax, xmax] = effectiveBox;
@@ -349,7 +412,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
         return (
             <AnimatePresence>
                 <motion.div
-                    key={`highlight-${xmin}-${ymin}-${xmax}-${ymax}-${isSnapped}-${zoomScale}`}
+                    key={`highlight-${xmin}-${ymin}-${xmax}-${ymax}-${status}-${zoomScale}`}
                     initial={{ opacity: 0, scale: 0.96 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.98 }}
@@ -363,7 +426,7 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                     }}
                 >
                     {/* Glowing highlight box */}
-                    <div className="absolute inset-0 rounded-md border-2 border-amber-400/90 bg-amber-300/20 dark:bg-yellow-400/15 shadow-[0_0_18px_rgba(251,191,36,0.45),0_0_4px_rgba(251,191,36,0.6)_inset] backdrop-blur-[0.5px]" />
+                    <div className={`absolute inset-0 rounded-md border-2 bg-amber-300/10 dark:bg-yellow-400/10 ${status === "exact" ? "border-emerald-500/90" : status === "refined" ? "border-amber-400/90 border-dashed" : "border-amber-400/60"}`} />
                     <div className="absolute -top-1 -left-1 w-2.5 h-2.5 border-t-2 border-l-2 border-amber-500 rounded-tl-sm" />
                     <div className="absolute -top-1 -right-1 w-2.5 h-2.5 border-t-2 border-r-2 border-amber-500 rounded-tr-sm" />
                     <div className="absolute -bottom-1 -left-1 w-2.5 h-2.5 border-b-2 border-l-2 border-amber-500 rounded-bl-sm" />
@@ -392,11 +455,9 @@ export function DocumentViewer({ file, activeHighlight, batchFiles, onFileReplac
                                     : {activeHighlight.rawValue}
                                 </span>
                             )}
-                            {isSnapped && (
-                                <span className="bg-emerald-600 text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded tracking-normal shrink-0">
-                                    VECTOR SNAPPED
+                            <span className={`${status === "exact" ? "bg-emerald-600" : "bg-amber-700"} text-white text-[9px] font-extrabold px-1.5 py-0.5 rounded tracking-normal shrink-0`}>
+                                    {status === "exact" ? "ТОЧНО" : status === "refined" ? "НЕ ПОДТВЕРЖДЕНО" : "ПРИМЕРНО ЗДЕСЬ"}
                                 </span>
-                            )}
                             <button
                                 type="button"
                                 onClick={(event) => { event.stopPropagation(); setShowBadge(false); }}

@@ -21,9 +21,12 @@ export const ARCHITECT_PROMPT = `Ты — Senior Data Architect для OCR и а
       "maxItems": 4,
       "description": "[ymin, xmin, ymax, xmax] в диапазоне 0..1000 относительно полной страницы"
     },
-    "page": { "type": "number", "description": "Номер страницы, начиная с 1" }
+    "page": { "type": "number", "description": "Номер страницы, начиная с 1" },
+    "raw_text": { "type": "string", "description": "Дословный текст значения в документе" },
+    "line_context": { "type": "string", "description": "Эта же строка с 5–10 соседними словами" },
+    "field_type": { "type": "string", "enum": ["date", "amount", "quantity", "text", "id"] }
   },
-  "required": ["value", "box_2d", "page"]
+  "required": ["value", "box_2d", "page", "raw_text", "line_context", "field_type"]
 }
 Тип value можно заменить на number или boolean, когда этого требует поле.
 markdown_text — единственное исключение и остаётся строкой.

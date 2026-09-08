@@ -416,9 +416,13 @@ export function BatchDataTable({
                     page: item.node.page || 1,
                     label: `${item.fileName} → ${formatHeader(item.colKey)}`,
                     rawValue: item.cellVal,
+                    rawText: String(item.node.raw_text ?? item.cellVal),
+                    lineContext: item.node.line_context,
+                    fieldType: item.node.field_type,
                     fileId: item.fileId,
                     fileName: item.fileName,
                     columnKey: item.colKey,
+                    path: item.path,
                 });
             }
         }
@@ -1452,9 +1456,13 @@ export function BatchDataTable({
                                                                                 page: node.page || 1,
                                                                                 label: `${fr.fileName} → ${formatHeader(col)}`,
                                                                                 rawValue: cellVal,
+                                                                                rawText: String(node.raw_text ?? cellVal),
+                                                                                lineContext: node.line_context,
+                                                                                fieldType: node.field_type,
                                                                                 fileId: fr.fileId,
                                                                                 fileName: fr.fileName,
                                                                                 columnKey: col,
+                                                                                path,
                                                                             });
                                                                         }
                                                                     }}

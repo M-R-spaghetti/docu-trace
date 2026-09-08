@@ -4,7 +4,8 @@ import { acquireApiRequest, safeHttpStatus, validatePrompt } from "@/lib/server/
 import { ALLOWED_MIME_TYPES } from "@/lib/media";
 import { getUploadLimits } from "@/lib/uploadLimits";
 import { buildArchitectPrompt } from "@/lib/server/prompts";
-import { createRequestDeadline, generateContentWithFallback, remainingRequestTime } from "@/lib/server/gemini";
+import { addGroundingEvidence } from "@/lib/server/groundingSchema";
+import { createRequestDeadline, generateContentWithFallback } from "@/lib/server/gemini";
 
 // Max duration for Vercel Serverless execution (up to 60s for Pro/Enterprise)
 export const maxDuration = 60;
@@ -130,44 +131,15 @@ const EXTRACTOR_PROMPT = `Ты — элитный Forensic Data Auditor с во�
 4. НОМЕР СТРАНИЦЫ (page): Для каждого значения укажи номер страницы документа, на которой оно находится. Нумерация начинается с 1. Для изображений (одна страница) — всегда page: 1.
 
 5. ФОРМАТ ОТВЕТА: Каждое конечное поле — это объект:
-   { "value": "<извлечённое значение>", "box_2d": [ymin, xmin, ymax, xmax], "page": 1 }
+   { "value": "<нормализованное значение>", "box_2d": [ymin, xmin, ymax, xmax], "page": 1,
+     "raw_text": "<дословные символы документа>",
+     "line_context": "<та же строка и 5–10 соседних слов>",
+     "field_type": "date|amount|quantity|text|id" }
+
+raw_text запрещено нормализовать или исправлять. line_context должен быть дословным и находиться на той же строке.
 
 Фокусируйся на описаниях полей (descriptions) в JSON-структуре, чтобы точно понимать намерения создателя схемы.
 Если ты понял задачу, приступай к аудиту и верни данные в безупречном JSON формате согласно схеме.`;
-
-function mergeCorrectedCoordinates(original: any, corrected: any): any {
-    if (!original || corrected === null || corrected === undefined) return original;
-
-    if (Array.isArray(original)) {
-        if (!Array.isArray(corrected)) return original;
-        return original.map((item, index) => mergeCorrectedCoordinates(item, corrected[index]));
-    }
-
-    if (typeof original === "object") {
-        if ("value" in original && Array.isArray(original.box_2d)) {
-            const candidate = corrected && typeof corrected === "object" ? corrected.box_2d : null;
-            const valid = Array.isArray(candidate)
-                && candidate.length === 4
-                && candidate.every((n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1000)
-                && candidate[2] > candidate[0]
-                && candidate[3] > candidate[1];
-
-            return valid ? {
-                ...original,
-                box_2d: candidate,
-                page: typeof corrected.page === "number" ? corrected.page : original.page,
-            } : original;
-        }
-
-        const merged: Record<string, any> = { ...original };
-        for (const key of Object.keys(original)) {
-            merged[key] = mergeCorrectedCoordinates(original[key], corrected?.[key]);
-        }
-        return merged;
-    }
-
-    return original;
-}
 
 export async function POST(req: NextRequest) {
     const guard = acquireApiRequest(req, "extract");
@@ -260,6 +232,7 @@ export async function POST(req: NextRequest) {
             }
         }
 
+        generatedSchema = addGroundingEvidence(generatedSchema);
         console.log("Schema used for extraction:", JSON.stringify(generatedSchema, null, 2));
 
         // Step 2: Extract Data with spatial coordinates and enforced schema
@@ -334,53 +307,6 @@ export async function POST(req: NextRequest) {
         } catch (e) {
             console.error("Extractor generated invalid JSON:", extractionText);
             throw new Error("Extractor failed to generate valid JSON data.");
-        }
-
-        // A separate grounding pass is intentionally used here. A box can be
-        // numerically valid while pointing to empty space, which cannot be
-        // detected by geometry checks in the browser.
-        try {
-            if (remainingRequestTime(deadline) < 10_000) {
-                console.warn("Skipping coordinate grounding: less than 10s remains in request budget.");
-                return NextResponse.json({ schema: generatedSchema, data: extractionResult }, { status: 200 });
-            }
-            const groundingPrompt = `Повторно проверь ТОЛЬКО пространственную привязку уже извлечённых данных на документе.
-Найди каждое указанное значение на полном исходном документе и верни ту же JSON-структуру.
-Значения запрещено исправлять, переводить, нормализовать или переставлять.
-Для каждого leaf-объекта измени только box_2d и page.
-box_2d имеет порядок [ymin, xmin, ymax, xmax], диапазон 0..1000 относительно ПОЛНОЙ страницы.
-
-ПРАВИЛА ГЕОМЕТРИЧЕСКОЙ ТОЧНОСТИ:
-1. СТРОЧНАЯ ИЗОЛЯЦИЯ: Рамка должна охватывать ТОЛЬКО строку, на которой визуально напечатаны символы значения. Запрещено смещать рамку на соседнюю строку выше или ниже. Горизонтальная ось (ymin + ymax)/2 обязана проходить ровно через середину высоты букв/цифр значения.
-2. ПЛОТНЫЙ КРОП: ymin — верхний край символов, ymax — нижний базовый край символов. Не включай межстрочные интервалы и пустые отступы.
-3. БЕЗ РАЗДЕЛИТЕЛЕЙ И МЕТОК: Если значение находится рядом с разделительной чертой (пунктир, линия таблицы, подчёркивание), рамка должна окружать символы текста, а не черту разделителя.
-4. ПРИВЯЗКА К СТРОКЕ КОНТЕКСТА: Если похожее значение встречается несколько раз, выбери вхождение, расположенное на одной горизонтальной строке с его логическим контекстом (например, дата рядом со временем или номером, цена рядом с наименованием).
-5. ПРОВЕРКА СОДЕРЖИМОГО РАМКИ: Внутри box_2d должны визуально находиться символы самого value. Для числового value рамка обязана содержать соответствующие цифры (допускается форматирование вроде 10 → 10.00), а не подпись Price, Qty, Total или иной заголовок столбца.
-6. ТАБЛИЧНАЯ СТРОКА: Для элемента массива используй строку конкретного товара. Цена должна находиться на одной строке с названием этого товара; запрещено брать заголовок PRICE или цену соседнего товара.
-
-ДАННЫЕ ДЛЯ ПОВТОРНОЙ ПРИВЯЗКИ:
-${JSON.stringify(extractionResult)}`;
-
-            const groundingResponse = await generateContentWithFallback(ai, {
-                contents: [{
-                    role: "user",
-                    parts: [
-                        { text: groundingPrompt },
-                        { inlineData: { data: base64Data, mimeType } },
-                    ],
-                }],
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: sanitizedSchema,
-                },
-            }, { deadline, label: "Coordinate Grounding", perCallTimeoutMs: 18_000 });
-
-            const corrected = JSON.parse(groundingResponse.text || "{}");
-            extractionResult = mergeCorrectedCoordinates(extractionResult, corrected);
-        } catch (groundingError) {
-            // Extraction remains usable even when the optional coordinate pass
-            // is rate-limited or returns malformed JSON.
-            console.warn("Coordinate grounding pass failed; using first-pass boxes:", groundingError);
         }
 
         return NextResponse.json({

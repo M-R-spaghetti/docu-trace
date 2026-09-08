@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ActiveHighlight, VerificationStateMap } from "@/lib/types";
-import { DocRow, HumanReview } from "@/lib/batchTypes";
+import { ActiveHighlight, GroundingStatus, VerificationStateMap } from "@/lib/types";
+import { CellReview, DocRow, HumanReview } from "@/lib/batchTypes";
 import { setByPath, explodeDoc } from "@/lib/flatten";
 import dynamic from "next/dynamic";
 import { DataTable } from "./DataTable";
@@ -136,6 +136,23 @@ export function WorkspaceLayout({
             return unchanged ? prev : hl;
         });
     }, []);
+
+    const handleGroundingStatus = useCallback((highlight: ActiveHighlight, status: GroundingStatus) => {
+        if (status === "exact" || !highlight.fileId || !highlight.path || !batchRows || !onBatchRowsChange) return;
+        const reason = status === "approximate"
+            ? "координаты приблизительные — строка не подтверждена"
+            : "привязка уточнена по пикселям — текст не подтверждён";
+        let changed = false;
+        const updated = batchRows.map(row => {
+            if (row.fileId !== highlight.fileId) return row;
+            const current = row.reviews?.[highlight.path!] || { auto: "ok" as const, reasons: [], human: "unreviewed" as const };
+            if (current.reasons.includes(reason)) return row;
+            changed = true;
+            const next: CellReview = { ...current, auto: current.auto === "error" ? "error" : "warn", reasons: [...current.reasons, reason] };
+            return { ...row, reviews: { ...row.reviews, [highlight.path!]: next } };
+        });
+        if (changed) onBatchRowsChange(updated);
+    }, [batchRows, onBatchRowsChange]);
 
     // Auto-expand sidebar when batch mode activates
     useEffect(() => {
@@ -399,6 +416,7 @@ export function WorkspaceLayout({
                     batchFiles={batchFileObjects}
                     onFileReplaced={handleFileReplaced}
                     onBatchFilesReplaced={handleBatchFilesReplaced}
+                    onGroundingStatusChange={handleGroundingStatus}
                 />
             </div>
 

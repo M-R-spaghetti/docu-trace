@@ -1,11 +1,16 @@
 // Bounding box from Gemini: [ymin, xmin, ymax, xmax] normalized 0-1000
 export type BoundingBox = [number, number, number, number];
+export type GroundingStatus = "exact" | "refined" | "approximate";
+export type GroundingFieldType = "date" | "amount" | "quantity" | "text" | "id";
 
 export interface LocatedValue<T = string> {
     value: T;
     box_2d: BoundingBox; // [ymin, xmin, ymax, xmax] 0-1000
     page: number;        // 1-indexed page number (always 1 for images)
     originalValue?: T;   // Preserves initial AI extraction when user edits the field
+    raw_text?: string;
+    line_context?: string;
+    field_type?: GroundingFieldType;
 }
 
 export type VerificationStatus = 'pending' | 'verified' | 'edited';
@@ -27,6 +32,10 @@ export interface ActiveHighlight {
     fileId?: string; // File ID for batch mode
     fileName?: string; // File name for batch mode
     columnKey?: string; // Column/field name
+    path?: string;
+    rawText?: string;
+    lineContext?: string;
+    fieldType?: GroundingFieldType;
 }
 
 // Legacy types kept for reference but no longer used in the new pipeline

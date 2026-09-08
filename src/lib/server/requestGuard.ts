@@ -8,6 +8,7 @@ export const PROMPT_LIMIT = 4_000;
 const POLICIES = {
     extract: { capacity: 6, refillPerMinute: 12, maxConcurrent: 4 },
     schema: { capacity: 3, refillPerMinute: 6, maxConcurrent: 2 },
+    grounding: { capacity: 4, refillPerMinute: 8, maxConcurrent: 2 },
 } as const;
 
 export function trustedClientIp(req: NextRequest): string {

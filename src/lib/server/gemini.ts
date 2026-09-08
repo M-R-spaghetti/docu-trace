@@ -2,6 +2,7 @@ export interface GenerateFallbackOptions {
     deadline: number;
     label: string;
     perCallTimeoutMs?: number;
+    allowLite?: boolean;
 }
 
 export const createRequestDeadline = (budgetMs = 55_000) => Date.now() + budgetMs;
@@ -14,7 +15,7 @@ export async function generateContentWithFallback(
 ) {
     const models = Array.from(new Set([
         process.env.GEMINI_MODEL || "gemini-2.5-flash",
-        "gemini-flash-lite-latest",
+        ...(options.allowLite === false ? [] : ["gemini-flash-lite-latest"]),
         "gemini-flash-latest",
     ]));
     let lastError: any = null;

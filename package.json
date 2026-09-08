@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "benchmark:grounding": "node scripts/grounding-benchmark.mjs",
     "check": "npm run test && tsc --noEmit && eslint && next build"
   },
   "dependencies": {

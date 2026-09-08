@@ -1,11 +1,13 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import reactHooks from "eslint-plugin-react-hooks";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
   {
+    plugins: { "react-hooks": reactHooks },
     rules: {
       // Model-generated document structures are intentionally dynamic today.
       // Keep the migration visible without blocking security/build checks.
@@ -20,6 +22,7 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    ".vercel/**",
     "next-env.d.ts",
   ]),
 ]);
