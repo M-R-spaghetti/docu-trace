@@ -8,7 +8,7 @@ import { addGroundingEvidence } from "@/lib/server/groundingSchema";
 import { createRequestDeadline, generateContentWithFallback } from "@/lib/server/gemini";
 import { getUserGemini, isQuotaError } from "@/lib/server/userGemini";
 
-// Max duration for Vercel Serverless execution (up to 60s for Pro/Enterprise)
+// Fluid Compute leaves enough room for long multimodal extraction responses.
 export const maxDuration = 180;
 export const dynamic = "force-dynamic";
 
