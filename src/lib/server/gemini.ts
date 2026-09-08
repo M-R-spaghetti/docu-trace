@@ -5,6 +5,8 @@ export interface GenerateFallbackOptions {
     label: string;
     perCallTimeoutMs?: number;
     allowLite?: boolean;
+    model?: string;
+    useProvidedClient?: boolean;
 }
 
 export const createRequestDeadline = (budgetMs = 55_000) => Date.now() + budgetMs;
@@ -28,14 +30,14 @@ export async function generateContentWithFallback(
     const isMock = ai && !(ai instanceof GoogleGenAI) && (!ai.apiKey && !ai._apiKey);
 
     let clients: any[] = [];
-    if (isMock || keys.length === 0) {
+    if (options.useProvidedClient || isMock || keys.length === 0) {
         clients = [ai];
     } else {
         clients = keys.map(k => new GoogleGenAI({ apiKey: k }));
     }
 
-    const primaryModel = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-    const models = Array.from(new Set([
+    const primaryModel = options.model || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    const models = options.model ? [options.model] : Array.from(new Set([
         primaryModel,
         "gemini-2.5-flash",
         "gemini-flash-latest",

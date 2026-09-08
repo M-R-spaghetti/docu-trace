@@ -5,6 +5,7 @@ import { saveHistory } from "./db";
 import { DocRow } from "./batchTypes";
 import { generateFileId, auditReceiptDoc } from "./review";
 import { getUploadLimits } from "./uploadLimits";
+import { geminiFetch } from "./geminiUserSettings";
 
 export interface RunReceiptBatchOptions {
     prompt?: string;
@@ -58,7 +59,7 @@ async function extractOne(
                 if (opts.format) fd.append("format", opts.format);
                 if (schema) fd.append("schema", JSON.stringify(schema));
 
-                const res = await fetch("/api/extract", {
+                const res = await geminiFetch("/api/extract", {
                     method: "POST",
                     body: fd,
                     signal: ac.signal,

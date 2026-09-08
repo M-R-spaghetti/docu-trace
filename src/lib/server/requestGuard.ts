@@ -50,7 +50,7 @@ export function acquireApiRequest(req: NextRequest, policyName: keyof typeof POL
             : Math.max(1, Math.ceil((1 - bucket.tokens) / (policy.refillPerMinute / 60)));
         return {
             response: NextResponse.json(
-                { error: "Too many document-processing requests. Please retry shortly." },
+                { error: "Слишком много запросов. Повторите попытку немного позже.", code: "RATE_LIMITED" },
                 { status: 429, headers: { "Retry-After": String(retrySeconds) } },
             ),
             release: () => {},

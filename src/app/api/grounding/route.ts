@@ -4,6 +4,7 @@ import { ALLOWED_MIME_TYPES } from "@/lib/media";
 import { getUploadLimits } from "@/lib/uploadLimits";
 import { acquireApiRequest, safeHttpStatus } from "@/lib/server/requestGuard";
 import { createRequestDeadline, generateContentWithFallback } from "@/lib/server/gemini";
+import { getUserGemini, isQuotaError } from "@/lib/server/userGemini";
 
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -59,9 +60,10 @@ export async function POST(req: NextRequest) {
             page: Number(field?.page) || 1,
         }));
         const data = Buffer.from(await file.arrayBuffer()).toString("base64");
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) throw Object.assign(new Error("GEMINI_API_KEY is not configured."), { status: 503 });
-        const ai = new GoogleGenAI({ apiKey });
+        const userGemini = getUserGemini(req);
+        const apiKey = process.env.GEMINI_API_KEY?.split(/[,\s;]+/).find(Boolean);
+        if (!userGemini && !apiKey) throw Object.assign(new Error("GEMINI_API_KEY is not configured."), { status: 503 });
+        const ai = userGemini?.ai || new GoogleGenAI({ apiKey: apiKey! });
         const prompt = `Ты выполняешь только визуальную локализацию уже известных цитат. Не извлекай и не исправляй значения.
 Для каждого поля найди на документе raw_text, используя line_context для выбора среди повторов. Верни тот же id, page и плотную рамку символов [ymin,xmin,ymax,xmax] 0..1000.
 Исходный box_2d — лишь приблизительная подсказка и не может победить текстовое совпадение.
@@ -69,12 +71,17 @@ export async function POST(req: NextRequest) {
         const result = await generateContentWithFallback(ai, {
             contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { data, mimeType: file.type } }] }],
             config: { responseMimeType: "application/json", responseSchema },
-        }, { deadline: createRequestDeadline(25_000), label: "Grounding Fallback", perCallTimeoutMs: 20_000, allowLite: false });
+        }, { deadline: createRequestDeadline(25_000), label: "Grounding Fallback", perCallTimeoutMs: 20_000, allowLite: false, model: userGemini?.model, useProvidedClient: Boolean(userGemini) });
         const parsed = JSON.parse(result.text || "{}");
         parsed.fields = Array.isArray(parsed.fields) ? parsed.fields.filter((field: any) => validBox(field?.box_2d)) : [];
         return NextResponse.json(parsed);
     } catch (error) {
-        return NextResponse.json({ error: error instanceof Error ? error.message : "Grounding failed." }, { status: safeHttpStatus(error) });
+        const quotaExhausted = isQuotaError(error);
+        return NextResponse.json({
+            error: quotaExhausted ? "Квота Gemini API закончилась. Подключите свой API-ключ." : error instanceof Error ? error.message : "Grounding failed.",
+            code: quotaExhausted ? "QUOTA_EXHAUSTED" : (error as { code?: string })?.code,
+            canUseOwnKey: quotaExhausted || undefined,
+        }, { status: quotaExhausted ? 429 : safeHttpStatus(error) });
     } finally {
         guard.release();
     }

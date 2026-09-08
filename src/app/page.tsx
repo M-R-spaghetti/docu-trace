@@ -18,6 +18,7 @@ import { generateFileId } from "@/lib/review";
 import { runStreamingPipeline } from "@/lib/streamingPipeline";
 import { useSessionContext, AppSession } from "@/lib/sessionContext";
 import { toast } from "sonner";
+import { geminiFetch } from "@/lib/geminiUserSettings";
 
 export default function Home() {
   const { 
@@ -146,7 +147,7 @@ export default function Home() {
     // Run async extraction in background
     if (isBatch) {
       try {
-        const schemaRes = await fetch("/api/schema", {
+        const schemaRes = await geminiFetch("/api/schema", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -312,7 +313,7 @@ export default function Home() {
       }
       formData.append("format", chosenFormat);
 
-      const response = await fetch("/api/extract", {
+      const response = await geminiFetch("/api/extract", {
         method: "POST",
         body: formData,
         signal: abortController.signal,
@@ -486,7 +487,7 @@ export default function Home() {
       formData.append("prompt", combinedPrompt);
       formData.append("format", activeSession.format);
 
-      const response = await fetch("/api/extract", {
+      const response = await geminiFetch("/api/extract", {
         method: "POST",
         body: formData,
       });

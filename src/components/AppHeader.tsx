@@ -10,7 +10,8 @@ import {
     Loader2, 
     FileSearch, 
     CheckCircle2, 
-    Sparkles 
+    Sparkles,
+    KeyRound
 } from "lucide-react";
 
 export function AppHeader() {
@@ -110,6 +111,9 @@ export function AppHeader() {
                             <span>{bgRunningCount} {bgRunningCount === 1 ? "в фоне" : "в фоне"}</span>
                         </div>
                     )}
+                    <button type="button" onClick={() => window.dispatchEvent(new CustomEvent("docutrace:open-gemini-settings", { detail: { quota: false } }))} className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground" title="Свой Gemini API" aria-label="Настройки Gemini API">
+                        <KeyRound className="h-4 w-4" />
+                    </button>
                     <ThemeToggle />
                 </div>
             </div>

@@ -6,6 +6,7 @@ import { getUploadLimits } from "@/lib/uploadLimits";
 import { buildArchitectPrompt } from "@/lib/server/prompts";
 import { addGroundingEvidence } from "@/lib/server/groundingSchema";
 import { createRequestDeadline, generateContentWithFallback } from "@/lib/server/gemini";
+import { getUserGemini, isQuotaError } from "@/lib/server/userGemini";
 
 // Max duration for Vercel Serverless execution (up to 60s for Pro/Enterprise)
 export const maxDuration = 60;
@@ -179,7 +180,9 @@ export async function POST(req: NextRequest) {
 
         const buffer = await file.arrayBuffer();
         const base64Data = Buffer.from(buffer).toString("base64");
-        const ai = getAI();
+        const userGemini = getUserGemini(req);
+        const ai = userGemini?.ai || getAI();
+        const userOptions = userGemini ? { model: userGemini.model, useProvidedClient: true } : {};
 
         const providedSchemaRaw = formData.get("schema") as string | null;
         let generatedSchema: any = null;
@@ -210,7 +213,7 @@ export async function POST(req: NextRequest) {
                 config: {
                     responseMimeType: "application/json",
                 }
-            }, { deadline, label: "Schema Engine", perCallTimeoutMs: 35_000 });
+            }, { deadline, label: "Schema Engine", perCallTimeoutMs: 35_000, ...userOptions });
 
             let schemaText = schemaResponse.text || "{}";
             schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
@@ -263,7 +266,7 @@ export async function POST(req: NextRequest) {
                     responseMimeType: "application/json",
                     responseSchema: sanitizedSchema,
                 }
-            }, { deadline, label: "Extraction Engine" });
+            }, { deadline, label: "Extraction Engine", ...userOptions });
             extractionText = extractionResponse.text || "{}";
         } catch (schemaErr: any) {
             console.warn(
@@ -289,7 +292,7 @@ export async function POST(req: NextRequest) {
                 config: {
                     responseMimeType: "application/json",
                 }
-            }, { deadline, label: "Extraction Recovery" });
+            }, { deadline, label: "Extraction Recovery", ...userOptions });
             extractionText = fallbackResponse.text || "{}";
         }
 
@@ -316,9 +319,12 @@ export async function POST(req: NextRequest) {
     } catch (error: any) {
         console.error("Extraction Pipeline Error:", error);
 
-        const status = safeHttpStatus(error);
+        const quotaExhausted = isQuotaError(error);
+        const status = quotaExhausted ? 429 : safeHttpStatus(error);
         let retryAfter: number | null = null;
-        const message = error.message || "Failed to process document.";
+        const message = quotaExhausted
+            ? "Квота Gemini API закончилась. Подключите свой API-ключ, чтобы продолжить обработку."
+            : error.message || "Failed to process document.";
 
         // Try to extract retryDelay from Google RPC details or message
         const details = error?.error?.details || error?.details;
@@ -345,7 +351,7 @@ export async function POST(req: NextRequest) {
         }
 
         return NextResponse.json(
-            { error: message, retryAfter: retryAfter || undefined },
+            { error: message, code: quotaExhausted ? "QUOTA_EXHAUSTED" : error?.code, canUseOwnKey: quotaExhausted || undefined, retryAfter: retryAfter || undefined },
             { status, headers }
         );
     } finally {

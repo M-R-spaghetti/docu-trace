@@ -2,6 +2,7 @@ import { optimizeImageFile } from "../media";
 import { createLimiter, mapWithConcurrency } from "./limiter";
 import { withRetry, HttpError } from "./retry";
 import { saveHistory } from "../db";
+import { geminiFetch } from "../geminiUserSettings";
 
 export type JobStatus = "queued" | "preparing" | "extracting" | "done" | "failed" | "skipped";
 
@@ -80,7 +81,7 @@ async function extractOne(
         formData.append("schema", JSON.stringify(schema));
     }
 
-    const res = await fetch("/api/extract", {
+    const res = await geminiFetch("/api/extract", {
         method: "POST",
         body: formData,
         signal,
@@ -160,7 +161,7 @@ export async function runBatchOrchestration(opts: RunBatchOptions): Promise<Batc
     if (!masterSchema) {
         try {
             console.log("[runBatch] Generating master schema once for batch...");
-            const schemaRes = await fetch("/api/schema", {
+            const schemaRes = await geminiFetch("/api/schema", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

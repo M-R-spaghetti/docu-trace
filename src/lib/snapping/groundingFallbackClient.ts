@@ -1,4 +1,5 @@
 import type { ActiveHighlight, BoundingBox } from "@/lib/types";
+import { geminiFetch } from "@/lib/geminiUserSettings";
 
 interface Pending { id: string; highlight: ActiveHighlight; signal?: AbortSignal; resolve: (box: BoundingBox | null) => void }
 interface FileQueue { pending: Pending[]; timer: ReturnType<typeof setTimeout> | null }
@@ -21,7 +22,7 @@ async function flush(file: File, queue: FileQueue) {
         page: highlight.page || 1,
     }))));
     try {
-        const response = await fetch("/api/grounding", { method: "POST", body: form });
+        const response = await geminiFetch("/api/grounding", { method: "POST", body: form });
         const payload = response.ok ? await response.json() : null;
         const byId = new Map((payload?.fields || []).map((field: any) => [String(field.id), field.box_2d]));
         active.forEach(item => {

@@ -17,6 +17,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { SessionProvider } from "@/lib/sessionContext";
 import { AppHeader } from "@/components/AppHeader";
+import { GeminiQuotaDialog } from "@/components/GeminiQuotaDialog";
 
 export const metadata: Metadata = {
   title: "DocuTrace AI",
@@ -48,6 +49,7 @@ export default function RootLayout({
                 </main>
               </div>
               <Toaster position="top-center" richColors />
+              <GeminiQuotaDialog />
             </SessionProvider>
           </ErrorBoundary>
         </ThemeProvider>

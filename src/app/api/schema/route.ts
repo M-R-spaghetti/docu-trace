@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
-import { acquireApiRequest, validatePrompt } from "@/lib/server/requestGuard";
+import { acquireApiRequest, safeHttpStatus, validatePrompt } from "@/lib/server/requestGuard";
 import { buildArchitectPrompt } from "@/lib/server/prompts";
 import { createRequestDeadline, generateContentWithFallback } from "@/lib/server/gemini";
+import { getUserGemini, isQuotaError } from "@/lib/server/userGemini";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -112,7 +113,8 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        const ai = getAI();
+        const userGemini = getUserGemini(req);
+        const ai = userGemini?.ai || getAI();
         const schemaResponse = await generateContentWithFallback(ai, {
             contents: [
                 {
@@ -125,7 +127,7 @@ export async function POST(req: NextRequest) {
             config: {
                 responseMimeType: "application/json",
             }
-        }, { deadline, label: "Schema Engine", perCallTimeoutMs: 35_000 });
+        }, { deadline, label: "Schema Engine", perCallTimeoutMs: 35_000, model: userGemini?.model, useProvidedClient: Boolean(userGemini) });
 
         let schemaText = schemaResponse.text || "{}";
         schemaText = schemaText.replace(/^\`\`\`json/m, "").replace(/^\`\`\`/m, "").trim();
@@ -142,6 +144,12 @@ export async function POST(req: NextRequest) {
         }
         return NextResponse.json({ schema }, { status: 200 });
     } catch (error: any) {
+        if (isQuotaError(error)) {
+            return NextResponse.json({ error: "Квота Gemini API закончилась. Подключите свой API-ключ, чтобы продолжить.", code: "QUOTA_EXHAUSTED", canUseOwnKey: true }, { status: 429 });
+        }
+        if (safeHttpStatus(error) === 400) {
+            return NextResponse.json({ error: error.message, code: error.code }, { status: 400 });
+        }
         console.warn("Schema Generation Error (activating fallback schema):", error);
         return NextResponse.json({ schema: DEFAULT_FALLBACK_SCHEMA, isFallback: true }, { status: 200 });
     } finally {

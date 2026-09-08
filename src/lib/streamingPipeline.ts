@@ -1,5 +1,6 @@
 import { slicePdfChunks, remapExtractedChunkPages, mergeExtractedData, PdfChunk, createChunkFromImageFiles } from "./pdfStitcher";
 import { getUploadLimits } from "./uploadLimits";
+import { geminiFetch } from "./geminiUserSettings";
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -90,7 +91,7 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
     if (!masterSchema) {
         try {
             console.log("[StreamingPipeline] Generating master schema upfront...");
-            const schemaRes = await fetch("/api/schema", {
+            const schemaRes = await geminiFetch("/api/schema", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -148,7 +149,7 @@ export async function runStreamingPipeline(opts: RunStreamingPipelineOptions): P
                 if (opts.format) fd.append("format", opts.format);
                 if (masterSchema) fd.append("schema", JSON.stringify(masterSchema));
 
-                const res = await fetch("/api/extract", {
+                const res = await geminiFetch("/api/extract", {
                     method: "POST",
                     body: fd,
                     signal: opts.signal,
